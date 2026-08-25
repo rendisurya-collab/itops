@@ -1,0 +1,87 @@
+# ==== Telegram ====
+# Dapatkan dari @BotFather di Telegram (perintah /newbot)
+TELEGRAM_BOT_TOKEN=8548622347:AAFp0NhUcTIux0Q6n8xrh2dC13Q7cQPmjCI
+
+# ID Telegram kamu sendiri, supaya bot hanya merespons kamu.
+# Cara dapatkan: chat ke bot @userinfobot lalu kirim /start, dia akan balas ID kamu.
+TELEGRAM_USER_ID=1022325736
+#TELEGRAM_USER_ID=1475678857
+#TELEGRAM_USER_ID=1310566754
+#TELEGRAM_USER_ID=948025137
+#TELEGRAM_USER_ID=837645645
+#TELEGRAM_USER_ID=553648540
+#TELEGRAM_USER_ID=327766443
+
+#Filter Group For Assigne Ticket
+#SDP_NOTIFY_GROUPS=IT Digital - TechDev Ops L1,IT Digital - TechDev Ops L2,IT Digital - TechDev Ops L3
+
+# ATAU: banyak tujuan sekaligus (format baru, isi ini SAJA kalau dipakai --
+# TELEGRAM_GROUP_ID/TELEGRAM_TOPIC_ID di atas jadi diabaikan).
+# Format: "ChatID:TopicID" dipisah koma. TopicID boleh dikosongkan kalau
+# grup itu tidak pakai Topics.
+# Contoh: -1001111111111:6,-1002222222222,-1003333333333:3
+TELEGRAM_NOTIFY_TARGETS=-1003982117705:2,-1001606974713:33096
+
+# ID grup Telegram (opsional). Kalau diisi, semua notifikasi/reminder otomatis
+# (logwork, tiket ServiceDesk Plus baru, reminder tiket Open) dikirim ke grup ini,
+# bukan ke chat personal kamu. Kosongkan untuk tetap ke personal.
+# Cara dapatkan: invite bot ke grup, lalu ketik /chatid di grup itu.
+#TELEGRAM_GROUP_ID=-1003716331928
+#TELEGRAM_GROUP_ID=-1001606974713
+
+# ID Topic di dalam grup (opsional, cuma berlaku kalau grup-nya mode Forum/Topics
+# aktif). Kalau diisi, notifikasi diarahkan ke topic spesifik ini.
+# Cara dapatkan: buka topic-nya, ketik /chatid di dalam topic itu.
+#TELEGRAM_TOPIC_ID=743
+
+
+#Service Desk
+SDP_BASE_URL=https://servicedesk.erajaya.com
+SDP_API_KEY=8CDE893A-FD5F-4A03-A3AC-C27FFA6F2F85
+
+# ==== Jira ====
+# Contoh: faz_bot.net
+JIRA_BASE_URL=https://erafone.atlassian.net
+
+# Email akun Jira kamu
+JIRA_EMAIL=rendi.hadinata@erajaya.com
+
+# Buat di: https://id.atlassian.com/manage-profile/security/api-tokens
+JIRA_API_TOKEN=ATATT3xFfGF0JXQUuXbgZNYe-KiMfnbIaElzXR7ZF0rKoAqQJLXmljbzt9tfQAqXcPrGesMEY3s0Z4Qp9O672BhtFJNnkvG75jqJlWMPaID1AGMAx0AQUzRJ04dkQksmh38_AmXTfrO9dZo9IOATn8h6RwMHl-pIvAuI2kOfZq_KpIiN2UrgYx4=9FB40612
+
+# ==== Reminder harian ====
+# Jam & menit reminder muncul (format 24 jam), sesuai TIMEZONE di bawah.
+# Ini dipakai HANYA kalau REMINDER_INTERVAL_MINUTES di bawah kosong/0.
+REMINDER_HOUR=23
+REMINDER_MINUTE=2
+
+# ==== ATAU REMINDER ISI LOGWORK ====
+# Isi angka menit (misal 30) supaya reminder muncul BERULANG tiap sekian menit,
+# selama jam kerja (REMINDER_START_HOUR - REMINDER_END_HOUR).
+# Kosongkan / isi 0 untuk pakai reminder sekali sehari di atas.
+REMINDER_ENABLED=false
+REMINDER_INTERVAL_MINUTES=0
+REMINDER_START_HOUR=9
+REMINDER_END_HOUR=19
+
+
+# Timezone untuk reminder & pencatatan waktu (format IANA)
+TIMEZONE=Asia/Jakarta
+
+#Notif Tiket Service Desk
+SDP_NOTIFY_GROUPS=IT Digital - TechDev Ops L1,IT Digital - TechDev Ops L2,IT Digital - TechDev Ops L3
+SDP_NOTIFY_INTERVAL_MINUTES=5
+
+# Reminder berkala untuk tiket yang masih Open (opsional).
+# Ini cuma nilai AWAL/default -- bisa diubah kapan saja lewat command /sdreminder
+# di chat tanpa perlu restart bot. 0 = nonaktif secara default.
+SDP_OPEN_REMINDER_MINUTES=8
+
+#MAPPING SUBCATEGORY
+#SDP_DEFAULT_SUBCATEGORY=Eraspace
+
+#INTERVAL QUERY
+QUERY_SCHEDULER_HOURS=0
+
+#STATUS SLA MONITOR
+SLA_MONITOR_ENABLED=false

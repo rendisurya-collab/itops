@@ -1,0 +1,60 @@
+[
+  {
+    "id": "0002",
+    "title": "encrypt/decrypt data",
+    "keywords": [
+      "encrypt",
+      "decrypt"
+    ],
+    "content": "ENCRYPT\ncara daftarin store ke SF(untuk mendapatkan apikey):\n- copy externalid generate hash ke https://www.md5hashgenerator.com/\n- copy hash ke https://www.base64encode.org/ klik encode masukan format (usernaeme:hasil hash)\n- copy hasil encode ke main.go bagian plainText := , paste lalu jalankan https://go.dev/play/p/pasCWAWV97_9\n- copy hasilnya ke apikey\n\n\nprivatekey\n6UPAaoBQiptOyNXC9Fkn207kh960WOkM\n\nDECRYPT\nhttps://go.dev/play/p/wMr6pY_X4YJ\n\nMd5Hashgenerator\nMD5 Hash Generator\nA tool for creating an MD5 hash from a string. Use this fast, free tool to create an MD5 hash from a string.",
+    "attachment": null
+  },
+  {
+    "id": "0003",
+    "title": "mass delete reservation",
+    "keywords": [
+      "delete",
+      "reservation"
+    ],
+    "content": "📘 mass delete reservation\n\nMassDeleteReservation\n1. extarct file ini lalu simpan drivemu\n2. masukkan nomor order yang akan didelete reservasinya, pada file \"delete_reservation\"\n3. buka power shell\n4. arahkan path ke folder file yang tadi disimpan\n5. jalankan .\\cancel_reservation.ps1\n6. tunggu sampai proses selesai\n\nnote: jika nemu error: \n1. cannot be loaded because running scripts is disabled, coba jalankan: Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned\n \n2. is not digitally signed, coba jalankan: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass\n\n3. setting execution policy, coba jalankan: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass",
+    "attachment": null,
+    "action": {
+      "script_path": "D:\\deletereservation\\cancel_reservation.ps1",
+      "params": [
+        {
+          "flag": "-CsvFile",
+          "type": "file"
+        }
+      ]
+    }
+  },
+  {
+    "id": "0005",
+    "title": "cek price",
+    "keywords": [
+      "cek price"
+    ],
+    "content": "input SKU, CHANNEL_ID, BUCODE",
+    "attachment": null,
+    "action": null
+  },
+  {
+    "id": "0006",
+    "title": "release voucher pmp",
+    "keywords": [
+      "release voucher",
+      "pmp"
+    ],
+    "content": "1. cari ID voucher di DB PMP\n2. masukkan ID nya ke excel \"promo_id\"\n3. panggil bot dengan masukkan keyword /run release voucher\n4. upload file \"promo_id\"",
+    "attachment": null,
+    "action": {
+      "script_path": "D:\\promovoucher\\release_voucher.ps1",
+      "params": [
+        {
+          "flag": "-upload file promo ID",
+          "type": "file"
+        }
+      ]
+    }
+  }
+]

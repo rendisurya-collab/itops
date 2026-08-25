@@ -1,0 +1,53 @@
+# Environment
+.env
+env.txt
+Get Content.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# State files (runtime generated)
+state.json
+sdp_assign_state.json
+sdp_notify_state.json
+
+# Logs
+*.log
+ticket_activity.log
+tools/deletereservation/logs/
+tools/promovoucher/logs/
+
+# Backup folder
+backup/
+
+# Excel temp files
+*.xlsx
+!jadwal_shift.xlsx
+
+# CSV data files (runtime)
+tools/deletereservation/*.csv
+tools/promovoucher/*.csv
+tools/promovoucher/relvoucher_*.csv
+tools/deletereservation/delres_*.csv
+
+# Executables
+*.exe
+
+# Lock files
+.~lock.*
+
+# IDE
+.vscode/
+.idea/
+.kiro/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Misc
+tools/promovoucher/New folder/

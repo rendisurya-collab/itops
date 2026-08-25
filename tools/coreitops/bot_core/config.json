@@ -1,0 +1,41 @@
+{
+  "telegram": {
+    "bot_token": "8548622347:AAGq3Fsbe265KUUPL6DGYwb6NZbR0MDlfuQ",
+    "chat_id": "-1003982117705"
+  },
+  "databases": [
+    {
+      "name": "apis_2022",
+      "adminer": {
+        "url": "https://adele.cygnuss-district8.com/adminer.php",
+        "basic_auth_user": "admin-era",
+        "basic_auth_pass": "HUG8wQdfa6DWhY4n",
+        "driver": "server",
+        "server": "172.20.82.44",
+        "username": "eraclub",
+        "password": "mariadb2019@eraclub.com",
+        "db": "apis_2022"
+      },
+      "query_files": [
+        "cek_stock_minus.sql",
+        "query1.sql"
+      ]
+    },
+    {
+      "name": "sap_middleware_live",
+      "adminer": {
+        "url": "https://adele.cygnuss-district8.com/adminer.php",
+        "basic_auth_user": "admin-era",
+        "basic_auth_pass": "HUG8wQdfa6DWhY4n",
+        "driver": "server",
+        "server": "172.20.82.110",
+        "username": "rendisurya",
+        "password": "n|QlD739ic#z6h?d",
+        "db": "sap_middleware_live"
+      },
+      "query_files": [
+        "push_error.sql"
+      ]
+    }
+  ]
+}

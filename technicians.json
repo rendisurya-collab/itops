@@ -1,0 +1,38 @@
+[
+  {
+    "id": 1,
+    "name": "Bagus Susworo",
+    "email": "bagus.susworo@erajaya.com",
+    "shift": "SHIFT_1"
+  },
+  {
+    "id": 2,
+    "name": "Tri Sutrisno",
+    "email": "tri.sutrisno@erajaya.com",
+    "shift": "SHIFT_1"
+  },
+  {
+    "id": 3,
+    "name": "Adelia Pebriani",
+    "email": "adelia.pebriani@erajaya.com",
+    "shift": "SHIFT_2"
+  },
+  {
+    "id": 4,
+    "name": "Prizky Stefajar",
+    "email": "prizky.utomo@erajaya.com",
+    "shift": "SHIFT_2"
+  },
+  {
+    "id": 6,
+    "name": "Bagus Susworo",
+    "email": "bagus.susworo@erajaya.com",
+    "shift": "SHIFT_3"
+  },
+{
+    "id": 7,
+    "name": "Tri Sutrisno",
+    "email": "tri.sutrisno@erajaya.com",
+    "shift": "SHIFT_3"
+  }
+]
