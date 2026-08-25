@@ -598,6 +598,52 @@ async def tools_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @restricted
+async def log_activity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /logactivity — kirim isi ticket_activity.log ke chat."""
+    if not os.path.exists(TICKET_LOG_FILE):
+        await update.message.reply_text("📋 File log kosong — belum ada aktivitas tiket.")
+        return
+
+    file_size = os.path.getsize(TICKET_LOG_FILE)
+
+    if file_size == 0:
+        await update.message.reply_text("📋 File log kosong — belum ada aktivitas tiket.")
+        return
+
+    # Kalau file kecil (<3500 chars), kirim sebagai text
+    # Kalau besar, kirim sebagai file
+    if file_size < 3500:
+        with open(TICKET_LOG_FILE, "r", encoding="utf-8") as f:
+            content = f.read()
+        await update.message.reply_text(
+            f"📋 <b>Ticket Activity Log</b>\n\n<pre>{html.escape(content)}</pre>",
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        # Kirim 50 baris terakhir sebagai text
+        with open(TICKET_LOG_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        last_50 = lines[-50:]
+        text_preview = "".join(last_50)
+        if len(text_preview) > 3500:
+            text_preview = text_preview[-3500:]
+
+        await update.message.reply_text(
+            f"📋 <b>Ticket Activity Log</b> (50 baris terakhir)\n\n<pre>{html.escape(text_preview)}</pre>",
+            parse_mode=ParseMode.HTML,
+        )
+
+        # Kirim juga sebagai file lengkap
+        with open(TICKET_LOG_FILE, "rb") as f:
+            await update.message.reply_document(
+                document=f,
+                filename="ticket_activity.log",
+                caption=f"📋 Log lengkap ({len(lines)} baris)",
+            )
+
+
+@restricted
 async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     msg = update.message
@@ -5051,6 +5097,7 @@ def main():
     app.add_handler(CallbackQueryHandler(tools_callback, pattern="^tools_"))
     app.add_handler(CommandHandler("sdtickets", sdtickets_command))
     app.add_handler(CommandHandler("sdticket", sdticket_command))
+    app.add_handler(CommandHandler("logactivity", log_activity_command))
     app.add_handler(CommandHandler("sdreminder", sdreminder_command))
     app.add_handler(
         MessageHandler(
