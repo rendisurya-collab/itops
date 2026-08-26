@@ -57,7 +57,7 @@ TICKET_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tick
 
 
 def write_ticket_log(ticket_id: str, tech_name: str, tech_email: str, status: str, shift: str, is_success: bool, error_msg: str = ""):
-    """Menyimpan setiap riwayat aksi update tiket ke dalam file ticket_activity.log"""
+    """Menyimpan setiap riwayat aksi update tiket ke file log DAN Google Sheets"""
     timestamp = dt.datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
     status_tag = "SUCCESS" if is_success else "FAILED"
     
@@ -68,11 +68,43 @@ def write_ticket_log(ticket_id: str, tech_name: str, tech_email: str, status: st
     if not is_success and error_msg:
         log_line += f" | Error: {error_msg}"
         
+    # Tulis ke file lokal
     try:
         with open(TICKET_LOG_FILE, "a", encoding="utf-8") as f:
             f.write(log_line + "\n")
     except Exception as e:
         logger.error(f"Gagal menulis ke file log tiket: {e}")
+
+    # Tulis ke Google Sheets (async-safe, jalan di background)
+    try:
+        _append_to_google_sheets([
+            timestamp, str(ticket_id), tech_name, tech_email, status, shift, status_tag, error_msg
+        ])
+    except Exception as e:
+        logger.error(f"Gagal menulis ke Google Sheets: {e}")
+
+
+def _append_to_google_sheets(row_data: list):
+    """Append satu baris ke Google Sheets."""
+    creds_json = config.GOOGLE_SHEETS_CREDENTIALS
+    sheet_id = config.GOOGLE_SHEETS_SPREADSHEET_ID
+
+    if not creds_json or not sheet_id:
+        return
+
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    creds_dict = json.loads(creds_json)
+    credentials = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+
+    gc = gspread.authorize(credentials)
+    spreadsheet = gc.open_by_key(sheet_id)
+    worksheet = spreadsheet.sheet1
+    worksheet.append_row(row_data, value_input_option="USER_ENTERED")
 
 
 def load_technicians() -> list:

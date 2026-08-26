@@ -155,3 +155,7 @@ SLA_MONITOR_ENABLED = os.getenv("SLA_MONITOR_ENABLED", "true").strip().lower() i
 SLA_MONITOR_INTERVAL_MINUTES = int(os.getenv("SLA_MONITOR_INTERVAL_MINUTES", "180"))
 SLA_MONITOR_URL = os.getenv("SLA_MONITOR_URL", "https://servicedesk.erajaya.com/WOListView.do")
 SLA_MONITOR_STATE_FILE = os.getenv("SLA_MONITOR_STATE_FILE", "state.json")
+
+# ==== Google Sheets Logging ====
+GOOGLE_SHEETS_CREDENTIALS = os.getenv("GOOGLE_SHEETS_CREDENTIALS", "")
+GOOGLE_SHEETS_SPREADSHEET_ID = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID", "18Vku1ikHbF8sa4ioRMm-yfkSejAUH4nsr7vE5JcjGI8")
