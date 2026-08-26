@@ -822,7 +822,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/awb - cek AWB/tracking order (ketik order number & source)\n"
         "/awbjne - cek AWB JNE (ketik order number & AWB)\n"
         "/query - jalankan query database manual\n"
-        "/updateshift - upload jadwal shift baru (.xlsx)\n"
         "/logactivity - lihat log aktivitas tiket\n"
         "/edit - edit logwork yang sudah ada\n"
         "/delete - hapus logwork\n"
@@ -5497,6 +5496,96 @@ async def hapusshift_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
 
+
+
+
+# ==============================================================================
+# COMMAND: /updatetimeshift — Update jam mulai/selesai shift secara massal
+# ==============================================================================
+
+@restricted
+async def updatetimeshift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /updatetimeshift SHIFT_X HH:MM HH:MM
+
+    Mengubah jam mulai dan jam selesai untuk SEMUA baris dengan nama shift tersebut.
+    Contoh: /updatetimeshift SHIFT_1 09:00 13:30
+    """
+    if not context.args or len(context.args) < 3:
+        await update.message.reply_text(
+            "<b>⏰ Update Waktu Shift</b>\n\n"
+            "Format:\n"
+            "<code>/updatetimeshift SHIFT_X HH:MM HH:MM</code>\n\n"
+            "Contoh:\n"
+            "<code>/updatetimeshift SHIFT_1 09:00 13:30</code>\n"
+            "<code>/updatetimeshift SHIFT_2 14:00 21:00</code>\n\n"
+            "Semua baris dengan nama shift tersebut akan diupdate jam-nya.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    shift_name = context.args[0].upper()
+    jam_mulai_str = context.args[1]
+    jam_selesai_str = context.args[2]
+
+    # Validasi format jam
+    try:
+        dt.datetime.strptime(jam_mulai_str, "%H:%M")
+        dt.datetime.strptime(jam_selesai_str, "%H:%M")
+    except ValueError:
+        await update.message.reply_text(
+            "⚠️ Format jam salah. Gunakan <code>HH:MM</code>\n"
+            "Contoh: <code>/updatetimeshift SHIFT_1 09:00 13:30</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # Update semua baris dengan shift tersebut
+    try:
+        updated = _update_time_for_shift(shift_name, jam_mulai_str, jam_selesai_str)
+        if updated == 0:
+            await update.message.reply_text(
+                f"ℹ️ Tidak ada baris dengan shift <code>{shift_name}</code> ditemukan di jadwal.",
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await update.message.reply_text(
+                f"✅ <b>Waktu shift berhasil diupdate!</b>\n\n"
+                f"🏷 Shift: <code>{shift_name}</code>\n"
+                f"⏰ Jam baru: <code>{jam_mulai_str} - {jam_selesai_str}</code>\n"
+                f"📝 Total baris diupdate: <b>{updated}</b>",
+                parse_mode=ParseMode.HTML,
+            )
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ Gagal update waktu shift:\n<code>{html.escape(str(e))}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+
+
+def _update_time_for_shift(shift_name: str, jam_mulai: str, jam_selesai: str) -> int:
+    """Update jam mulai & selesai untuk semua baris dengan nama shift tertentu. Return jumlah baris terupdate."""
+    if not os.path.exists(SHIFT_FILE):
+        return 0
+
+    wb = openpyxl.load_workbook(SHIFT_FILE)
+    ws = wb.active
+    updated = 0
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=False), start=2):
+        cell_shift = row[3].value if len(row) > 3 else None
+        existing_shift = str(cell_shift).strip().upper() if cell_shift else ""
+
+        if existing_shift == shift_name.upper():
+            ws.cell(row=row_idx, column=2, value=jam_mulai)
+            ws.cell(row=row_idx, column=3, value=jam_selesai)
+            updated += 1
+
+    if updated > 0:
+        wb.save(SHIFT_FILE)
+    wb.close()
+    return updated
+
+
 async def push_error_daily_job(context: ContextTypes.DEFAULT_TYPE):
     """Daily job: jalankan push_error.sql jam 17:00 dan kirim hasilnya."""
     try:
@@ -5845,6 +5934,7 @@ def main():
     app.add_handler(CommandHandler("lihatshift", lihatshift_command))
     app.add_handler(CommandHandler("tambahshift", tambahshift_command))
     app.add_handler(CommandHandler("hapusshift", hapusshift_command))
+    app.add_handler(CommandHandler("updatetimeshift", updatetimeshift_command))
 
     # Command /query (manual trigger)
     app.add_handler(CommandHandler("query", query_command))
