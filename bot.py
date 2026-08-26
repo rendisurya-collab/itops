@@ -5284,8 +5284,10 @@ def _read_shift_rows(tanggal_start: dt.date = None, tanggal_end: dt.date = None)
             continue
 
         cell_tgl = row[0]
-        if isinstance(cell_tgl, (dt.date, dt.datetime)):
-            tgl = cell_tgl if isinstance(cell_tgl, dt.date) else cell_tgl.date()
+        if isinstance(cell_tgl, dt.datetime):
+            tgl = cell_tgl.date()
+        elif isinstance(cell_tgl, dt.date):
+            tgl = cell_tgl
         else:
             try:
                 tgl = dt.datetime.strptime(str(cell_tgl).strip(), "%Y-%m-%d").date()
@@ -5299,8 +5301,8 @@ def _read_shift_rows(tanggal_start: dt.date = None, tanggal_end: dt.date = None)
 
         results.append({
             "tanggal": tgl,
-            "jam_mulai": str(row[1]).strip() if row[1] else "",
-            "jam_selesai": str(row[2]).strip() if row[2] else "",
+            "jam_mulai": row[1].strftime("%H:%M") if isinstance(row[1], (dt.time, dt.datetime)) else str(row[1]).strip() if row[1] else "",
+            "jam_selesai": row[2].strftime("%H:%M") if isinstance(row[2], (dt.time, dt.datetime)) else str(row[2]).strip() if row[2] else "",
             "shift": str(row[3]).strip() if row[3] else "",
             "teknisi": str(row[4]).strip() if row[4] else "",
         })
