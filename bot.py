@@ -81,7 +81,7 @@ def write_ticket_log(ticket_id: str, tech_name: str, tech_email: str, status: st
             timestamp, str(ticket_id), tech_name, tech_email, status, shift, status_tag, error_msg
         ])
     except Exception as e:
-        logger.error(f"Gagal menulis ke Google Sheets: {e}")
+        logger.error(f"Gagal menulis ke Google Sheets: {type(e).__name__}: {e}")
 
 
 def _append_to_google_sheets(row_data: list):
@@ -90,6 +90,7 @@ def _append_to_google_sheets(row_data: list):
     sheet_id = config.GOOGLE_SHEETS_SPREADSHEET_ID
 
     if not creds_json or not sheet_id:
+        logger.warning("Google Sheets credentials atau spreadsheet ID kosong, skip logging.")
         return
 
     import gspread
