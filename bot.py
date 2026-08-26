@@ -5505,27 +5505,39 @@ async def hapusshift_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 @restricted
 async def updatetimeshift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler /updatetimeshift SHIFT_X HH:MM HH:MM
+    """Handler /updatetimeshift YYYY-MM-DD SHIFT_X HH:MM HH:MM
 
-    Mengubah jam mulai dan jam selesai untuk SEMUA baris dengan nama shift tersebut.
-    Contoh: /updatetimeshift SHIFT_1 09:00 13:30
+    Mengubah jam mulai dan jam selesai untuk shift tertentu di tanggal tertentu.
+    Contoh: /updatetimeshift 2026-08-27 SHIFT_1 09:00 13:30
     """
-    if not context.args or len(context.args) < 3:
+    if not context.args or len(context.args) < 4:
         await update.message.reply_text(
             "<b>⏰ Update Waktu Shift</b>\n\n"
             "Format:\n"
-            "<code>/updatetimeshift SHIFT_X HH:MM HH:MM</code>\n\n"
+            "<code>/updatetimeshift YYYY-MM-DD SHIFT_X HH:MM HH:MM</code>\n\n"
             "Contoh:\n"
-            "<code>/updatetimeshift SHIFT_1 09:00 13:30</code>\n"
-            "<code>/updatetimeshift SHIFT_2 14:00 21:00</code>\n\n"
-            "Semua baris dengan nama shift tersebut akan diupdate jam-nya.",
+            "<code>/updatetimeshift 2026-08-27 SHIFT_1 09:00 13:30</code>\n"
+            "<code>/updatetimeshift 2026-08-27 SHIFT_2 14:00 21:00</code>\n\n"
+            "Mengubah jam shift di tanggal yang ditentukan.",
             parse_mode=ParseMode.HTML,
         )
         return
 
-    shift_name = context.args[0].upper()
-    jam_mulai_str = context.args[1]
-    jam_selesai_str = context.args[2]
+    tanggal_str = context.args[0]
+    shift_name = context.args[1].upper()
+    jam_mulai_str = context.args[2]
+    jam_selesai_str = context.args[3]
+
+    # Validasi format tanggal
+    try:
+        tanggal = dt.datetime.strptime(tanggal_str, "%Y-%m-%d").date()
+    except ValueError:
+        await update.message.reply_text(
+            "⚠️ Format tanggal salah. Gunakan <code>YYYY-MM-DD</code>\n"
+            "Contoh: <code>/updatetimeshift 2026-08-27 SHIFT_1 09:00 13:30</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
 
     # Validasi format jam
     try:
@@ -5534,22 +5546,24 @@ async def updatetimeshift_command(update: Update, context: ContextTypes.DEFAULT_
     except ValueError:
         await update.message.reply_text(
             "⚠️ Format jam salah. Gunakan <code>HH:MM</code>\n"
-            "Contoh: <code>/updatetimeshift SHIFT_1 09:00 13:30</code>",
+            "Contoh: <code>/updatetimeshift 2026-08-27 SHIFT_1 09:00 13:30</code>",
             parse_mode=ParseMode.HTML,
         )
         return
 
-    # Update semua baris dengan shift tersebut
+    # Update baris dengan tanggal + shift tersebut
     try:
-        updated = _update_time_for_shift(shift_name, jam_mulai_str, jam_selesai_str)
+        updated = _update_time_for_shift(shift_name, jam_mulai_str, jam_selesai_str, tanggal)
         if updated == 0:
             await update.message.reply_text(
-                f"ℹ️ Tidak ada baris dengan shift <code>{shift_name}</code> ditemukan di jadwal.",
+                f"ℹ️ Tidak ada baris dengan shift <code>{shift_name}</code> "
+                f"di tanggal <code>{tanggal_str}</code> ditemukan di jadwal.",
                 parse_mode=ParseMode.HTML,
             )
         else:
             await update.message.reply_text(
                 f"✅ <b>Waktu shift berhasil diupdate!</b>\n\n"
+                f"📅 Tanggal: <code>{tanggal_str}</code>\n"
                 f"🏷 Shift: <code>{shift_name}</code>\n"
                 f"⏰ Jam baru: <code>{jam_mulai_str} - {jam_selesai_str}</code>\n"
                 f"📝 Total baris diupdate: <b>{updated}</b>",
@@ -5562,23 +5576,36 @@ async def updatetimeshift_command(update: Update, context: ContextTypes.DEFAULT_
         )
 
 
-def _update_time_for_shift(shift_name: str, jam_mulai: str, jam_selesai: str) -> int:
-    """Update jam mulai & selesai untuk semua baris dengan nama shift tertentu. Return jumlah baris terupdate."""
+def _update_time_for_shift(shift_name: str, jam_mulai: str, jam_selesai: str, tanggal: dt.date = None) -> int:
+    """Update jam mulai & selesai untuk baris dengan shift (dan tanggal) tertentu. Return jumlah baris terupdate."""
     if not os.path.exists(SHIFT_FILE):
         return 0
 
     wb = openpyxl.load_workbook(SHIFT_FILE)
     ws = wb.active
     updated = 0
+    target_tgl_str = tanggal.strftime("%Y-%m-%d") if tanggal else None
 
     for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=False), start=2):
         cell_shift = row[3].value if len(row) > 3 else None
         existing_shift = str(cell_shift).strip().upper() if cell_shift else ""
 
-        if existing_shift == shift_name.upper():
-            ws.cell(row=row_idx, column=2, value=jam_mulai)
-            ws.cell(row=row_idx, column=3, value=jam_selesai)
-            updated += 1
+        if existing_shift != shift_name.upper():
+            continue
+
+        # Cek tanggal jika diberikan
+        if target_tgl_str:
+            cell_tgl = row[0].value
+            if isinstance(cell_tgl, (dt.date, dt.datetime)):
+                existing_tgl = cell_tgl.strftime("%Y-%m-%d")
+            else:
+                existing_tgl = str(cell_tgl).strip() if cell_tgl else ""
+            if existing_tgl != target_tgl_str:
+                continue
+
+        ws.cell(row=row_idx, column=2, value=jam_mulai)
+        ws.cell(row=row_idx, column=3, value=jam_selesai)
+        updated += 1
 
     if updated > 0:
         wb.save(SHIFT_FILE)
