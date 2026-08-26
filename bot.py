@@ -5295,7 +5295,7 @@ async def updateshift_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def updateshift_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Terima file xlsx untuk replace jadwal shift."""
+    """Terima file xlsx dan merge (upsert) ke Google Sheets."""
     if not update.message.document:
         await update.message.reply_text("Kirim file .xlsx, bukan teks. Coba lagi atau /cancel.")
         return UPDATESHIFT_UPLOAD
@@ -5309,42 +5309,62 @@ async def updateshift_upload(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     try:
         file = await doc.get_file()
-        # Download ke path sementara dulu untuk validasi
         temp_path = SHIFT_FILE + ".tmp"
         await file.download_to_drive(temp_path)
 
-        # Validasi: coba baca sebagai Excel
+        # Baca dan validasi file Excel
         wb = openpyxl.load_workbook(temp_path, data_only=True)
         sheet = wb.active
-        row_count = 0
+        new_rows = []
         for row in sheet.iter_rows(min_row=2, values_only=True):
-            if row and len(row) >= 5 and row[0]:
-                row_count += 1
-        wb.close()
+            if not row or len(row) < 5 or not row[0]:
+                continue
+            cell_tgl = row[0]
+            if isinstance(cell_tgl, (dt.datetime, dt.date)):
+                tgl_str = cell_tgl.strftime("%Y-%m-%d")
+            else:
+                tgl_str = str(cell_tgl).strip()
+            # Validasi format tanggal
+            try:
+                dt.datetime.strptime(tgl_str, "%Y-%m-%d")
+            except ValueError:
+                continue
 
-        if row_count == 0:
-            os.remove(temp_path)
+            jam_mulai = row[1].strftime("%H:%M") if isinstance(row[1], (dt.time, dt.datetime)) else str(row[1]).strip()
+            jam_selesai = row[2].strftime("%H:%M") if isinstance(row[2], (dt.time, dt.datetime)) else str(row[2]).strip()
+            shift_name = str(row[3]).strip()
+            teknisi = str(row[4]).strip()
+            new_rows.append((tgl_str, jam_mulai, jam_selesai, shift_name, teknisi))
+
+        wb.close()
+        os.remove(temp_path)
+
+        if not new_rows:
             await update.message.reply_text(
                 "⚠️ File tidak valid — tidak ada data jadwal ditemukan (baris kosong atau format salah).\n"
                 "Pastikan format kolom benar. Coba upload ulang atau /cancel."
             )
             return UPDATESHIFT_UPLOAD
 
-        # Replace file lama
-        if os.path.exists(SHIFT_FILE):
-            os.remove(SHIFT_FILE)
-        os.rename(temp_path, SHIFT_FILE)
+        # Merge/upsert ke Google Sheets (data lama yang tidak ada di file TIDAK dihapus)
+        added = 0
+        updated = 0
+        for tgl_str, jam_mulai, jam_selesai, shift_name, teknisi in new_rows:
+            tanggal = dt.datetime.strptime(tgl_str, "%Y-%m-%d").date()
+            # _sheets_upsert_shift: update jika tanggal+shift sama, tambah jika belum ada
+            _sheets_upsert_shift(tanggal, jam_mulai, jam_selesai, shift_name, teknisi)
 
         await update.message.reply_text(
-            f"✅ <b>Jadwal shift berhasil diupdate!</b>\n\n"
+            f"✅ <b>Jadwal shift berhasil di-merge ke Google Sheets!</b>\n\n"
             f"File: <code>{doc.file_name}</code>\n"
-            f"Total jadwal: <b>{row_count} baris</b>\n\n"
-            "Bot akan otomatis menggunakan jadwal baru ini.",
+            f"Total baris diproses: <b>{len(new_rows)}</b>\n\n"
+            "• Baris dengan tanggal+shift yang sudah ada → <b>diupdate</b>\n"
+            "• Baris baru → <b>ditambahkan</b>\n"
+            "• Data lama di sheet yang tidak ada di file → <b>tetap aman</b>",
             parse_mode=ParseMode.HTML,
         )
 
     except Exception as e:
-        # Cleanup temp file jika ada
         temp_path = SHIFT_FILE + ".tmp"
         if os.path.exists(temp_path):
             os.remove(temp_path)
