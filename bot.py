@@ -1341,6 +1341,38 @@ async def natural_tools_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     text = update.message.text.strip()
 
+    # Coba detect Delete Reservation (bucode + ordernumber + sku + qty)
+    # Harus dicek SEBELUM promo karena keduanya punya sku + bucode
+    delres_data = _parse_delres_text(text)
+    if delres_data:
+        # Ada data delreservation, arahkan ke flow konfirmasi
+        csv_path = _build_delres_csv(delres_data)
+        context.user_data["delres_csv"] = csv_path
+        context.user_data["delres_source"] = "text"
+        context.user_data["delres_items"] = delres_data
+
+        preview_lines = []
+        for i, item in enumerate(delres_data, 1):
+            skus = ", ".join(item["itemCodes"])
+            preview_lines.append(
+                f"{i}. {item['transactionNumber']} | BU: {item['businessUnitCode']} | "
+                f"SKU: {skus} | Qty: {item.get('qty', 1)}"
+            )
+
+        await update.message.reply_text(
+            f"<b>🗑 Konfirmasi Delete Reservation</b>\n\n"
+            + "\n".join(preview_lines)
+            + "\n\nEksekusi sekarang?",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ Eksekusi", callback_data="delres_yes"),
+                    InlineKeyboardButton("❌ Batal", callback_data="delres_no"),
+                ]
+            ]),
+        )
+        return
+
     # Coba detect AWB JNE (ordernumber + awb)
     awbjne_data = _parse_awbjne_text(text)
     if awbjne_data:
@@ -1355,9 +1387,9 @@ async def natural_tools_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await _cekawb_execute(update, context)
         return
 
-    # Coba detect Promo (sku + bucode)
+    # Coba detect Promo (sku + bucode, TANPA ordernumber)
     promo_data = _parse_cekpromo_text(text)
-    if promo_data:
+    if promo_data and not re.search(r"(?:ordernumber|order|no)\s*[:=]", text, re.IGNORECASE):
         context.user_data["cekpromo_data"] = promo_data
         await _cekpromo_execute(update, context)
         return
@@ -5245,6 +5277,7 @@ def main():
     )
     app.add_handler(checkstock_conv)
     app.add_handler(CallbackQueryHandler(checkstock_confirm, pattern="^checkstock_"))
+    app.add_handler(CallbackQueryHandler(delreservation_confirm, pattern="^delres_"))
 
     # ConversationHandler cek promo
     cekpromo_conv = ConversationHandler(
