@@ -3293,8 +3293,12 @@ def _execute_delreservation(csv_path: str) -> str:
             resp_text = resp.text
 
             if resp.status_code == 200:
-                # Cek logical error
-                if "not exists" in resp_text.lower() or "not found" in resp_text.lower() or "error" in resp_text.lower():
+                # Cek logical error — response yang sukses biasanya mengandung "Successfully"
+                resp_lower = resp_text.lower()
+                if "successfully" in resp_lower or '"outerror":0' in resp_lower.replace(" ", ""):
+                    success_count += 1
+                    output_lines.append(f"[{total}] {trx} -> Sukses")
+                elif "not exists" in resp_lower or "not found" in resp_lower or "invalid" in resp_lower or "gagal" in resp_lower:
                     failed_count += 1
                     output_lines.append(f"[{total}] {trx} -> GAGAL (logika): {resp_text[:100]}")
                 else:
