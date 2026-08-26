@@ -5674,8 +5674,11 @@ async def testsheets_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             parse_mode=ParseMode.HTML,
         )
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        error_msg = f"{type(e).__name__}: {str(e)}\n\n{tb[-1500:]}"
         await update.message.reply_text(
-            f"⚠️ <b>Gagal koneksi Google Sheets:</b>\n<code>{html.escape(type(e).__name__)}: {html.escape(str(e))}</code>",
+            f"⚠️ <b>Gagal koneksi Google Sheets:</b>\n<pre>{html.escape(error_msg)}</pre>",
             parse_mode=ParseMode.HTML,
         )
 
