@@ -117,6 +117,182 @@ def _append_to_google_sheets(row_data: list):
     logger.info(f"✅ Berhasil append ke Google Sheets: {row_data[:3]}...")
 
 
+# ==============================================================================
+# GOOGLE SHEETS: JADWAL SHIFT HELPERS
+# ==============================================================================
+SHIFT_SHEET_TAB = "JadwalShift"
+
+
+def _get_gspread_client():
+    """Return authorized gspread client, atau None jika credentials kosong."""
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    creds_json = config.GOOGLE_SHEETS_CREDENTIALS
+    sheet_id = config.GOOGLE_SHEETS_SPREADSHEET_ID
+
+    if not creds_json or not sheet_id:
+        return None, None
+
+    creds_dict = json.loads(creds_json)
+    credentials = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    gc = gspread.authorize(credentials)
+    spreadsheet = gc.open_by_key(sheet_id)
+    return gc, spreadsheet
+
+
+def _get_shift_worksheet():
+    """Return worksheet 'JadwalShift', buat jika belum ada."""
+    _, spreadsheet = _get_gspread_client()
+    if spreadsheet is None:
+        raise RuntimeError("Google Sheets credentials atau spreadsheet ID kosong.")
+
+    try:
+        ws = spreadsheet.worksheet(SHIFT_SHEET_TAB)
+    except Exception:
+        # Buat tab baru dengan header
+        ws = spreadsheet.add_worksheet(title=SHIFT_SHEET_TAB, rows=500, cols=5)
+        ws.append_row(["Tanggal", "Jam Mulai", "Jam Selesai", "Shift", "Teknisi"], value_input_option="USER_ENTERED")
+
+    return ws
+
+
+def _sheets_read_all_shifts() -> list:
+    """Baca semua baris jadwal shift dari Google Sheets. Return list of dict."""
+    ws = _get_shift_worksheet()
+    rows = ws.get_all_values()
+
+    results = []
+    for row in rows[1:]:  # skip header
+        if len(row) < 5 or not row[0]:
+            continue
+        try:
+            tgl = dt.datetime.strptime(row[0].strip(), "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        results.append({
+            "tanggal": tgl,
+            "jam_mulai": row[1].strip(),
+            "jam_selesai": row[2].strip(),
+            "shift": row[3].strip(),
+            "teknisi": row[4].strip(),
+        })
+
+    results.sort(key=lambda x: (x["tanggal"], x["jam_mulai"]))
+    return results
+
+
+def _sheets_read_shifts(tanggal_start: dt.date = None, tanggal_end: dt.date = None) -> list:
+    """Baca jadwal shift dari Google Sheets dalam rentang tanggal."""
+    all_rows = _sheets_read_all_shifts()
+    filtered = []
+    for r in all_rows:
+        if tanggal_start and r["tanggal"] < tanggal_start:
+            continue
+        if tanggal_end and r["tanggal"] > tanggal_end:
+            continue
+        filtered.append(r)
+    return filtered
+
+
+def _sheets_upsert_shift(tanggal: dt.date, jam_mulai: str, jam_selesai: str, shift_name: str, teknisi: str):
+    """Update baris jika tanggal+shift sudah ada, atau tambah baru."""
+    ws = _get_shift_worksheet()
+    rows = ws.get_all_values()
+    target_tgl = tanggal.strftime("%Y-%m-%d")
+
+    for idx, row in enumerate(rows[1:], start=2):  # row index 1-based di sheets, skip header
+        if len(row) < 5:
+            continue
+        if row[0].strip() == target_tgl and row[3].strip().upper() == shift_name.upper():
+            # Update baris existing
+            ws.update(f"A{idx}:E{idx}", [[target_tgl, jam_mulai, jam_selesai, shift_name, teknisi]])
+            return
+
+    # Tidak ditemukan → append
+    ws.append_row([target_tgl, jam_mulai, jam_selesai, shift_name, teknisi], value_input_option="USER_ENTERED")
+
+
+def _sheets_add_shift(tanggal: dt.date, jam_mulai: str, jam_selesai: str, shift_name: str, teknisi: str):
+    """Selalu tambah baris baru."""
+    ws = _get_shift_worksheet()
+    ws.append_row([tanggal.strftime("%Y-%m-%d"), jam_mulai, jam_selesai, shift_name, teknisi], value_input_option="USER_ENTERED")
+
+
+def _sheets_delete_shifts(tanggal: dt.date = None, shift_name: str = None) -> int:
+    """Hapus baris berdasarkan tanggal dan/atau shift. Return jumlah baris terhapus."""
+    ws = _get_shift_worksheet()
+    rows = ws.get_all_values()
+    target_tgl = tanggal.strftime("%Y-%m-%d") if tanggal else None
+
+    rows_to_delete = []
+    for idx, row in enumerate(rows[1:], start=2):
+        if len(row) < 5 or not row[0]:
+            continue
+        match = True
+        if target_tgl and row[0].strip() != target_tgl:
+            match = False
+        if shift_name and row[3].strip().upper() != shift_name.upper():
+            match = False
+        if match:
+            rows_to_delete.append(idx)
+
+    # Hapus dari bawah ke atas
+    for idx in reversed(rows_to_delete):
+        ws.delete_rows(idx)
+
+    return len(rows_to_delete)
+
+
+def _sheets_update_time(shift_name: str, jam_mulai: str, jam_selesai: str, tanggal: dt.date = None) -> int:
+    """Update jam mulai/selesai untuk shift (dan tanggal) tertentu. Return jumlah baris terupdate."""
+    ws = _get_shift_worksheet()
+    rows = ws.get_all_values()
+    target_tgl = tanggal.strftime("%Y-%m-%d") if tanggal else None
+
+    updated = 0
+    for idx, row in enumerate(rows[1:], start=2):
+        if len(row) < 5 or not row[0]:
+            continue
+        if row[3].strip().upper() != shift_name.upper():
+            continue
+        if target_tgl and row[0].strip() != target_tgl:
+            continue
+        # Update kolom B dan C
+        ws.update(f"B{idx}:C{idx}", [[jam_mulai, jam_selesai]])
+        updated += 1
+
+    return updated
+
+
+def get_current_shift_from_sheets() -> dict:
+    """Membaca jadwal shift dari Google Sheets dan return shift + teknisi saat ini."""
+    now_dt = dt.datetime.now(TZ)
+    today = now_dt.date()
+    current_time = now_dt.time()
+
+    try:
+        rows = _sheets_read_shifts(today, today)
+    except Exception as e:
+        logger.error(f"Gagal baca shift dari Google Sheets: {e}")
+        return {"shift": "OFF_SHIFT", "technician": None}
+
+    for r in rows:
+        try:
+            t_start = dt.datetime.strptime(r["jam_mulai"], "%H:%M").time()
+            t_end = dt.datetime.strptime(r["jam_selesai"], "%H:%M").time()
+        except ValueError:
+            continue
+
+        if t_start <= current_time < t_end:
+            return {"shift": r["shift"], "technician": r["teknisi"]}
+
+    return {"shift": "OFF_SHIFT", "technician": None}
+
+
 def load_technicians() -> list:
     """Membaca daftar teknisi dari file JSON"""
     if not os.path.exists(TECH_FILE):
@@ -248,12 +424,15 @@ async def auto_assign_sdp_tickets(context: ContextTypes.DEFAULT_TYPE):
     if not sdp or not config.SDP_NOTIFY_GROUPS:
         return
 
-    shift_info = get_current_shift_from_excel("jadwal_shift.xlsx")
+    # Prioritas: Google Sheets, fallback ke file Excel lokal
+    shift_info = get_current_shift_from_sheets()
+    if shift_info.get("shift") == "OFF_SHIFT":
+        shift_info = get_current_shift_from_excel("jadwal_shift.xlsx")
     current_shift = shift_info.get("shift")
     on_duty_techs = shift_info.get("technician")
 
     if not current_shift or current_shift == "OFF_SHIFT" or not on_duty_techs:
-        logger.info("Saat ini di luar jam shift / tidak ada teknisi piket di Excel.")
+        logger.info("Saat ini di luar jam shift / tidak ada teknisi piket.")
         return
 
     try:
@@ -5078,9 +5257,9 @@ async def updateshift_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return ConversationHandler.END
 
-        # Tulis/update ke file Excel
+        # Tulis/update ke Google Sheets
         try:
-            _upsert_shift_row(tanggal, jam_mulai_str, jam_selesai_str, shift_name, teknisi_str)
+            _sheets_upsert_shift(tanggal, jam_mulai_str, jam_selesai_str, shift_name, teknisi_str)
             await update.message.reply_text(
                 f"✅ <b>Jadwal shift berhasil diupdate!</b>\n\n"
                 f"📅 Tanggal: <code>{tanggal_str}</code>\n"
@@ -5363,7 +5542,7 @@ async def lihatshift_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             return
 
-    rows = _read_shift_rows(start_date, end_date)
+    rows = _sheets_read_shifts(start_date, end_date)
 
     if not rows:
         await update.message.reply_text(
@@ -5436,7 +5615,7 @@ async def tambahshift_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     try:
-        _add_shift_row(tanggal, jam_mulai_str, jam_selesai_str, shift_name, teknisi_str)
+        _sheets_add_shift(tanggal, jam_mulai_str, jam_selesai_str, shift_name, teknisi_str)
         await update.message.reply_text(
             f"✅ <b>Baris jadwal berhasil ditambahkan!</b>\n\n"
             f"📅 Tanggal: <code>{tanggal_str}</code>\n"
@@ -5488,7 +5667,7 @@ async def hapusshift_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
-    deleted = _delete_shift_rows(tanggal, shift_filter)
+    deleted = _sheets_delete_shifts(tanggal, shift_filter)
 
     if deleted == 0:
         filter_text = f" shift <code>{shift_filter}</code>" if shift_filter else ""
@@ -5562,7 +5741,7 @@ async def updatetimeshift_command(update: Update, context: ContextTypes.DEFAULT_
 
     # Update baris dengan tanggal + shift tersebut
     try:
-        updated = _update_time_for_shift(shift_name, jam_mulai_str, jam_selesai_str, tanggal)
+        updated = _sheets_update_time(shift_name, jam_mulai_str, jam_selesai_str, tanggal)
         if updated == 0:
             await update.message.reply_text(
                 f"ℹ️ Tidak ada baris dengan shift <code>{shift_name}</code> "
