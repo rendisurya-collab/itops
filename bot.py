@@ -89,14 +89,22 @@ def _append_to_google_sheets(row_data: list):
     creds_json = config.GOOGLE_SHEETS_CREDENTIALS
     sheet_id = config.GOOGLE_SHEETS_SPREADSHEET_ID
 
-    if not creds_json or not sheet_id:
-        logger.warning("Google Sheets credentials atau spreadsheet ID kosong, skip logging.")
+    if not creds_json:
+        logger.warning("GOOGLE_SHEETS_CREDENTIALS env kosong, skip logging ke Sheets.")
+        return
+    if not sheet_id:
+        logger.warning("GOOGLE_SHEETS_SPREADSHEET_ID env kosong, skip logging ke Sheets.")
         return
 
     import gspread
     from google.oauth2.service_account import Credentials
 
-    creds_dict = json.loads(creds_json)
+    try:
+        creds_dict = json.loads(creds_json)
+    except json.JSONDecodeError as e:
+        logger.error(f"GOOGLE_SHEETS_CREDENTIALS bukan JSON valid: {e}")
+        return
+
     credentials = Credentials.from_service_account_info(
         creds_dict,
         scopes=["https://www.googleapis.com/auth/spreadsheets"]
@@ -106,6 +114,7 @@ def _append_to_google_sheets(row_data: list):
     spreadsheet = gc.open_by_key(sheet_id)
     worksheet = spreadsheet.sheet1
     worksheet.append_row(row_data, value_input_option="USER_ENTERED")
+    logger.info(f"✅ Berhasil append ke Google Sheets: {row_data[:3]}...")
 
 
 def load_technicians() -> list:
@@ -5613,6 +5622,64 @@ def _update_time_for_shift(shift_name: str, jam_mulai: str, jam_selesai: str, ta
     return updated
 
 
+# ==============================================================================
+# COMMAND: /testsheets — Test koneksi ke Google Sheets
+# ==============================================================================
+
+@restricted
+async def testsheets_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Test koneksi Google Sheets dan append baris percobaan."""
+    await update.message.reply_text("⏳ Testing koneksi Google Sheets...")
+
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+
+        creds_json = config.GOOGLE_SHEETS_CREDENTIALS
+        sheet_id = config.GOOGLE_SHEETS_SPREADSHEET_ID
+
+        if not creds_json:
+            await update.message.reply_text("⚠️ <code>GOOGLE_SHEETS_CREDENTIALS</code> env kosong!", parse_mode=ParseMode.HTML)
+            return
+        if not sheet_id:
+            await update.message.reply_text("⚠️ <code>GOOGLE_SHEETS_SPREADSHEET_ID</code> env kosong!", parse_mode=ParseMode.HTML)
+            return
+
+        creds_dict = json.loads(creds_json)
+        credentials = Credentials.from_service_account_info(
+            creds_dict,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        )
+
+        gc = gspread.authorize(credentials)
+        spreadsheet = gc.open_by_key(sheet_id)
+        worksheet = spreadsheet.sheet1
+
+        # Append test row
+        timestamp = dt.datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+        test_row = [timestamp, "TEST", "Test Connection", "test@test.com", "Test", "TEST_SHIFT", "SUCCESS", ""]
+        worksheet.append_row(test_row, value_input_option="USER_ENTERED")
+
+        await update.message.reply_text(
+            f"✅ <b>Koneksi Google Sheets berhasil!</b>\n\n"
+            f"Spreadsheet: <code>{spreadsheet.title}</code>\n"
+            f"Sheet: <code>{worksheet.title}</code>\n"
+            f"Test row berhasil ditulis pada {timestamp}",
+            parse_mode=ParseMode.HTML,
+        )
+
+    except json.JSONDecodeError as e:
+        await update.message.reply_text(
+            f"⚠️ <b>GOOGLE_SHEETS_CREDENTIALS bukan JSON valid:</b>\n<code>{html.escape(str(e))}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ <b>Gagal koneksi Google Sheets:</b>\n<code>{html.escape(type(e).__name__)}: {html.escape(str(e))}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+
+
 async def push_error_daily_job(context: ContextTypes.DEFAULT_TYPE):
     """Daily job: jalankan push_error.sql jam 17:00 dan kirim hasilnya."""
     try:
@@ -5962,6 +6029,7 @@ def main():
     app.add_handler(CommandHandler("tambahshift", tambahshift_command))
     app.add_handler(CommandHandler("hapusshift", hapusshift_command))
     app.add_handler(CommandHandler("updatetimeshift", updatetimeshift_command))
+    app.add_handler(CommandHandler("testsheets", testsheets_command))
 
     # Command /query (manual trigger)
     app.add_handler(CommandHandler("query", query_command))
