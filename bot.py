@@ -504,7 +504,8 @@ def _extract_project_prefix(text: str):
     CEKAWB_INPUT,
     CEKAWB_QUERY_CONFIRM,
     AWBJNE_INPUT,
-) = range(48)
+    UPDATESHIFT_UPLOAD,
+) = range(49)
 
 
 def _thread_id_from_update(update: Update):
@@ -821,6 +822,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/awb - cek AWB/tracking order (ketik order number & source)\n"
         "/awbjne - cek AWB JNE (ketik order number & AWB)\n"
         "/query - jalankan query database manual\n"
+        "/updateshift - upload jadwal shift baru (.xlsx)\n"
+        "/logactivity - lihat log aktivitas tiket\n"
         "/edit - edit logwork yang sudah ada\n"
         "/delete - hapus logwork\n"
         "/guide <kata kunci> - munculkan guidance/panduan tersimpan\n"
@@ -5021,6 +5024,477 @@ async def _awbjne_execute_multi(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 
+# ==============================================================================
+# UPDATE JADWAL SHIFT VIA TELEGRAM
+# ==============================================================================
+SHIFT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jadwal_shift.xlsx")
+
+
+@restricted
+async def updateshift_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /updateshift — upload file atau update via teks.
+
+    Format teks:
+        /updateshift 2026-08-26 07:00 15:00 SHIFT_1 Bagus, Tri
+    Jika tanpa argumen, minta upload file xlsx.
+    """
+    # Cek apakah ada argumen teks inline
+    if context.args and len(context.args) >= 5:
+        # Parse inline: tanggal jam_mulai jam_selesai shift teknisi...
+        tanggal_str = context.args[0]
+        jam_mulai_str = context.args[1]
+        jam_selesai_str = context.args[2]
+        shift_name = context.args[3]
+        teknisi_str = " ".join(context.args[4:])
+
+        # Validasi format tanggal
+        try:
+            tanggal = dt.datetime.strptime(tanggal_str, "%Y-%m-%d").date()
+        except ValueError:
+            await update.message.reply_text(
+                "⚠️ Format tanggal salah. Gunakan <code>YYYY-MM-DD</code>\n"
+                "Contoh: <code>/updateshift 2026-08-26 07:00 15:00 SHIFT_1 Bagus, Tri</code>",
+                parse_mode=ParseMode.HTML,
+            )
+            return ConversationHandler.END
+
+        # Validasi format jam
+        try:
+            dt.datetime.strptime(jam_mulai_str, "%H:%M")
+            dt.datetime.strptime(jam_selesai_str, "%H:%M")
+        except ValueError:
+            await update.message.reply_text(
+                "⚠️ Format jam salah. Gunakan <code>HH:MM</code>\n"
+                "Contoh: <code>/updateshift 2026-08-26 07:00 15:00 SHIFT_1 Bagus, Tri</code>",
+                parse_mode=ParseMode.HTML,
+            )
+            return ConversationHandler.END
+
+        # Tulis/update ke file Excel
+        try:
+            _upsert_shift_row(tanggal, jam_mulai_str, jam_selesai_str, shift_name, teknisi_str)
+            await update.message.reply_text(
+                f"✅ <b>Jadwal shift berhasil diupdate!</b>\n\n"
+                f"📅 Tanggal: <code>{tanggal_str}</code>\n"
+                f"⏰ Jam: <code>{jam_mulai_str} - {jam_selesai_str}</code>\n"
+                f"🏷 Shift: <code>{shift_name}</code>\n"
+                f"👤 Teknisi: <code>{teknisi_str}</code>",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as e:
+            await update.message.reply_text(
+                f"⚠️ Gagal update jadwal:\n<code>{html.escape(str(e))}</code>",
+                parse_mode=ParseMode.HTML,
+            )
+        return ConversationHandler.END
+
+    # Tanpa argumen → minta upload file
+    context.user_data.clear()
+    await update.message.reply_text(
+        "<b>📅 Update Jadwal Shift</b>\n\n"
+        "Upload file <code>jadwal_shift.xlsx</code> baru.\n\n"
+        "<b>Atau gunakan format teks:</b>\n"
+        "<code>/updateshift YYYY-MM-DD HH:MM HH:MM SHIFT_X Nama1, Nama2</code>\n\n"
+        "Format kolom file:\n"
+        "A: Tanggal (2026-08-25)\n"
+        "B: Jam Mulai (07:00)\n"
+        "C: Jam Selesai (15:00)\n"
+        "D: Nama Shift (SHIFT_1)\n"
+        "E: Teknisi (nama, pisah koma jika &gt;1)\n\n"
+        "Kirim file sekarang, atau /cancel untuk batal.",
+        parse_mode=ParseMode.HTML,
+    )
+    return UPDATESHIFT_UPLOAD
+
+
+async def updateshift_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Terima file xlsx untuk replace jadwal shift."""
+    if not update.message.document:
+        await update.message.reply_text("Kirim file .xlsx, bukan teks. Coba lagi atau /cancel.")
+        return UPDATESHIFT_UPLOAD
+
+    doc = update.message.document
+    if not doc.file_name.lower().endswith(".xlsx"):
+        await update.message.reply_text("File harus berformat .xlsx. Coba upload ulang.")
+        return UPDATESHIFT_UPLOAD
+
+    await update.message.reply_text("⏳ Mengunduh dan memproses file...")
+
+    try:
+        file = await doc.get_file()
+        # Download ke path sementara dulu untuk validasi
+        temp_path = SHIFT_FILE + ".tmp"
+        await file.download_to_drive(temp_path)
+
+        # Validasi: coba baca sebagai Excel
+        wb = openpyxl.load_workbook(temp_path, data_only=True)
+        sheet = wb.active
+        row_count = 0
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if row and len(row) >= 5 and row[0]:
+                row_count += 1
+        wb.close()
+
+        if row_count == 0:
+            os.remove(temp_path)
+            await update.message.reply_text(
+                "⚠️ File tidak valid — tidak ada data jadwal ditemukan (baris kosong atau format salah).\n"
+                "Pastikan format kolom benar. Coba upload ulang atau /cancel."
+            )
+            return UPDATESHIFT_UPLOAD
+
+        # Replace file lama
+        if os.path.exists(SHIFT_FILE):
+            os.remove(SHIFT_FILE)
+        os.rename(temp_path, SHIFT_FILE)
+
+        await update.message.reply_text(
+            f"✅ <b>Jadwal shift berhasil diupdate!</b>\n\n"
+            f"File: <code>{doc.file_name}</code>\n"
+            f"Total jadwal: <b>{row_count} baris</b>\n\n"
+            "Bot akan otomatis menggunakan jadwal baru ini.",
+            parse_mode=ParseMode.HTML,
+        )
+
+    except Exception as e:
+        # Cleanup temp file jika ada
+        temp_path = SHIFT_FILE + ".tmp"
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        await update.message.reply_text(
+            f"⚠️ Gagal memproses file:\n<code>{html.escape(str(e))}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+# ==============================================================================
+# HELPER: UPSERT / TAMBAH / HAPUS BARIS DI JADWAL SHIFT EXCEL
+# ==============================================================================
+
+def _ensure_shift_workbook():
+    """Buka atau buat file jadwal_shift.xlsx dengan header."""
+    if os.path.exists(SHIFT_FILE):
+        wb = openpyxl.load_workbook(SHIFT_FILE)
+    else:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["Tanggal", "Jam Mulai", "Jam Selesai", "Shift", "Teknisi"])
+        wb.save(SHIFT_FILE)
+    return wb
+
+
+def _upsert_shift_row(tanggal: dt.date, jam_mulai: str, jam_selesai: str, shift_name: str, teknisi: str):
+    """Update baris jika tanggal+shift sudah ada, atau tambah baris baru."""
+    wb = _ensure_shift_workbook()
+    ws = wb.active
+
+    target_tgl_str = tanggal.strftime("%Y-%m-%d")
+
+    # Cari baris dengan tanggal + shift yang sama untuk di-update
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=False), start=2):
+        cell_tgl = row[0].value
+        cell_shift = row[3].value if len(row) > 3 else None
+
+        if isinstance(cell_tgl, (dt.date, dt.datetime)):
+            existing_tgl = cell_tgl.strftime("%Y-%m-%d")
+        else:
+            existing_tgl = str(cell_tgl).strip() if cell_tgl else ""
+
+        existing_shift = str(cell_shift).strip() if cell_shift else ""
+
+        if existing_tgl == target_tgl_str and existing_shift.upper() == shift_name.upper():
+            # Update baris existing
+            ws.cell(row=row_idx, column=1, value=tanggal)
+            ws.cell(row=row_idx, column=2, value=jam_mulai)
+            ws.cell(row=row_idx, column=3, value=jam_selesai)
+            ws.cell(row=row_idx, column=4, value=shift_name)
+            ws.cell(row=row_idx, column=5, value=teknisi)
+            wb.save(SHIFT_FILE)
+            wb.close()
+            return
+
+    # Tidak ditemukan → tambah baris baru
+    ws.append([tanggal, jam_mulai, jam_selesai, shift_name, teknisi])
+    wb.save(SHIFT_FILE)
+    wb.close()
+
+
+def _add_shift_row(tanggal: dt.date, jam_mulai: str, jam_selesai: str, shift_name: str, teknisi: str):
+    """Selalu tambah baris baru (tidak cek duplikat)."""
+    wb = _ensure_shift_workbook()
+    ws = wb.active
+    ws.append([tanggal, jam_mulai, jam_selesai, shift_name, teknisi])
+    wb.save(SHIFT_FILE)
+    wb.close()
+
+
+def _delete_shift_rows(tanggal: dt.date = None, shift_name: str = None) -> int:
+    """Hapus baris berdasarkan tanggal dan/atau shift. Return jumlah baris terhapus."""
+    if not os.path.exists(SHIFT_FILE):
+        return 0
+
+    wb = openpyxl.load_workbook(SHIFT_FILE)
+    ws = wb.active
+
+    target_tgl_str = tanggal.strftime("%Y-%m-%d") if tanggal else None
+    rows_to_delete = []
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=False), start=2):
+        cell_tgl = row[0].value
+        cell_shift = row[3].value if len(row) > 3 else None
+
+        if isinstance(cell_tgl, (dt.date, dt.datetime)):
+            existing_tgl = cell_tgl.strftime("%Y-%m-%d")
+        else:
+            existing_tgl = str(cell_tgl).strip() if cell_tgl else ""
+
+        existing_shift = str(cell_shift).strip().upper() if cell_shift else ""
+
+        match = True
+        if target_tgl_str and existing_tgl != target_tgl_str:
+            match = False
+        if shift_name and existing_shift != shift_name.upper():
+            match = False
+        if match:
+            rows_to_delete.append(row_idx)
+
+    # Hapus dari bawah ke atas agar index tidak bergeser
+    for row_idx in reversed(rows_to_delete):
+        ws.delete_rows(row_idx)
+
+    wb.save(SHIFT_FILE)
+    wb.close()
+    return len(rows_to_delete)
+
+
+def _read_shift_rows(tanggal_start: dt.date = None, tanggal_end: dt.date = None) -> list:
+    """Baca baris jadwal shift dalam rentang tanggal. Return list of dict."""
+    if not os.path.exists(SHIFT_FILE):
+        return []
+
+    wb = openpyxl.load_workbook(SHIFT_FILE, data_only=True)
+    ws = wb.active
+    results = []
+
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row or len(row) < 5 or not row[0]:
+            continue
+
+        cell_tgl = row[0]
+        if isinstance(cell_tgl, (dt.date, dt.datetime)):
+            tgl = cell_tgl if isinstance(cell_tgl, dt.date) else cell_tgl.date()
+        else:
+            try:
+                tgl = dt.datetime.strptime(str(cell_tgl).strip(), "%Y-%m-%d").date()
+            except ValueError:
+                continue
+
+        if tanggal_start and tgl < tanggal_start:
+            continue
+        if tanggal_end and tgl > tanggal_end:
+            continue
+
+        results.append({
+            "tanggal": tgl,
+            "jam_mulai": str(row[1]).strip() if row[1] else "",
+            "jam_selesai": str(row[2]).strip() if row[2] else "",
+            "shift": str(row[3]).strip() if row[3] else "",
+            "teknisi": str(row[4]).strip() if row[4] else "",
+        })
+
+    wb.close()
+    # Sort by tanggal lalu jam_mulai
+    results.sort(key=lambda x: (x["tanggal"], x["jam_mulai"]))
+    return results
+
+
+# ==============================================================================
+# COMMAND: /lihatshift — Melihat jadwal shift hari ini / minggu ini
+# ==============================================================================
+
+@restricted
+async def lihatshift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /lihatshift [hari/minggu/YYYY-MM-DD]
+
+    - /lihatshift           → jadwal hari ini
+    - /lihatshift minggu    → jadwal minggu ini (Senin–Minggu)
+    - /lihatshift 2026-08-26  → jadwal tanggal tertentu
+    """
+    now = dt.datetime.now(TZ)
+    today = now.date()
+
+    arg = context.args[0].lower().strip() if context.args else "hari"
+
+    if arg in ("hari", "today"):
+        start_date = today
+        end_date = today
+        label = f"Hari Ini ({today.strftime('%A, %d %b %Y')})"
+    elif arg in ("minggu", "week", "weekly"):
+        # Senin minggu ini
+        start_date = today - dt.timedelta(days=today.weekday())
+        end_date = start_date + dt.timedelta(days=6)
+        label = f"Minggu Ini ({start_date.strftime('%d %b')} – {end_date.strftime('%d %b %Y')})"
+    else:
+        # Coba parse sebagai tanggal
+        try:
+            start_date = dt.datetime.strptime(arg, "%Y-%m-%d").date()
+            end_date = start_date
+            label = f"Tanggal {start_date.strftime('%A, %d %b %Y')}"
+        except ValueError:
+            await update.message.reply_text(
+                "⚠️ Format salah. Gunakan:\n"
+                "<code>/lihatshift</code> — hari ini\n"
+                "<code>/lihatshift minggu</code> — minggu ini\n"
+                "<code>/lihatshift 2026-08-26</code> — tanggal tertentu",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+    rows = _read_shift_rows(start_date, end_date)
+
+    if not rows:
+        await update.message.reply_text(
+            f"📅 <b>Jadwal Shift — {label}</b>\n\n"
+            "Tidak ada jadwal ditemukan.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    lines = [f"📅 <b>Jadwal Shift — {label}</b>\n"]
+    current_date = None
+    for r in rows:
+        if r["tanggal"] != current_date:
+            current_date = r["tanggal"]
+            lines.append(f"\n<b>{current_date.strftime('%A, %d %b %Y')}</b>")
+        lines.append(
+            f"  • {r['jam_mulai']}–{r['jam_selesai']} | "
+            f"<code>{r['shift']}</code> | {r['teknisi']}"
+        )
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+# ==============================================================================
+# COMMAND: /tambahshift — Tambah baris ke jadwal tanpa replace file
+# ==============================================================================
+
+@restricted
+async def tambahshift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /tambahshift YYYY-MM-DD HH:MM HH:MM SHIFT_X Nama1, Nama2
+
+    Menambah baris baru ke jadwal (tidak menimpa jika sudah ada shift sama di tanggal itu).
+    """
+    if not context.args or len(context.args) < 5:
+        await update.message.reply_text(
+            "<b>📝 Tambah Jadwal Shift</b>\n\n"
+            "Format:\n"
+            "<code>/tambahshift YYYY-MM-DD HH:MM HH:MM SHIFT_X Nama1, Nama2</code>\n\n"
+            "Contoh:\n"
+            "<code>/tambahshift 2026-08-26 07:00 15:00 SHIFT_1 Bagus, Tri</code>\n"
+            "<code>/tambahshift 2026-08-26 15:00 23:00 SHIFT_2 Adelia</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    tanggal_str = context.args[0]
+    jam_mulai_str = context.args[1]
+    jam_selesai_str = context.args[2]
+    shift_name = context.args[3]
+    teknisi_str = " ".join(context.args[4:])
+
+    # Validasi
+    try:
+        tanggal = dt.datetime.strptime(tanggal_str, "%Y-%m-%d").date()
+    except ValueError:
+        await update.message.reply_text(
+            "⚠️ Format tanggal salah. Gunakan <code>YYYY-MM-DD</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    try:
+        dt.datetime.strptime(jam_mulai_str, "%H:%M")
+        dt.datetime.strptime(jam_selesai_str, "%H:%M")
+    except ValueError:
+        await update.message.reply_text(
+            "⚠️ Format jam salah. Gunakan <code>HH:MM</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    try:
+        _add_shift_row(tanggal, jam_mulai_str, jam_selesai_str, shift_name, teknisi_str)
+        await update.message.reply_text(
+            f"✅ <b>Baris jadwal berhasil ditambahkan!</b>\n\n"
+            f"📅 Tanggal: <code>{tanggal_str}</code>\n"
+            f"⏰ Jam: <code>{jam_mulai_str} - {jam_selesai_str}</code>\n"
+            f"🏷 Shift: <code>{shift_name}</code>\n"
+            f"👤 Teknisi: <code>{teknisi_str}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ Gagal tambah jadwal:\n<code>{html.escape(str(e))}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+
+
+# ==============================================================================
+# COMMAND: /hapusshift — Hapus jadwal shift berdasarkan tanggal/shift
+# ==============================================================================
+
+@restricted
+async def hapusshift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /hapusshift YYYY-MM-DD [SHIFT_X]
+
+    - /hapusshift 2026-08-26          → hapus SEMUA shift di tanggal tersebut
+    - /hapusshift 2026-08-26 SHIFT_1  → hapus hanya SHIFT_1 di tanggal tersebut
+    """
+    if not context.args:
+        await update.message.reply_text(
+            "<b>🗑 Hapus Jadwal Shift</b>\n\n"
+            "Format:\n"
+            "<code>/hapusshift YYYY-MM-DD</code> — hapus semua shift di tanggal tsb\n"
+            "<code>/hapusshift YYYY-MM-DD SHIFT_1</code> — hapus shift tertentu saja\n\n"
+            "Contoh:\n"
+            "<code>/hapusshift 2026-08-26</code>\n"
+            "<code>/hapusshift 2026-08-26 SHIFT_2</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    tanggal_str = context.args[0]
+    shift_filter = context.args[1] if len(context.args) > 1 else None
+
+    try:
+        tanggal = dt.datetime.strptime(tanggal_str, "%Y-%m-%d").date()
+    except ValueError:
+        await update.message.reply_text(
+            "⚠️ Format tanggal salah. Gunakan <code>YYYY-MM-DD</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    deleted = _delete_shift_rows(tanggal, shift_filter)
+
+    if deleted == 0:
+        filter_text = f" shift <code>{shift_filter}</code>" if shift_filter else ""
+        await update.message.reply_text(
+            f"ℹ️ Tidak ada jadwal ditemukan untuk tanggal <code>{tanggal_str}</code>{filter_text}.",
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        filter_text = f" ({shift_filter})" if shift_filter else " (semua shift)"
+        await update.message.reply_text(
+            f"✅ <b>Berhasil menghapus {deleted} baris jadwal</b>\n\n"
+            f"📅 Tanggal: <code>{tanggal_str}</code>{filter_text}",
+            parse_mode=ParseMode.HTML,
+        )
+
+
 async def push_error_daily_job(context: ContextTypes.DEFAULT_TYPE):
     """Daily job: jalankan push_error.sql jam 17:00 dan kirim hasilnya."""
     try:
@@ -5350,6 +5824,25 @@ def main():
         per_message=False,
     )
     app.add_handler(awbjne_conv)
+
+    # ConversationHandler update shift
+    updateshift_conv = ConversationHandler(
+        entry_points=[CommandHandler("updateshift", updateshift_start)],
+        states={
+            UPDATESHIFT_UPLOAD: [
+                MessageHandler(filters.Document.ALL, updateshift_upload),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, updateshift_upload),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+    )
+    app.add_handler(updateshift_conv)
+
+    # Command shift management (tanpa ConversationHandler, langsung execute)
+    app.add_handler(CommandHandler("lihatshift", lihatshift_command))
+    app.add_handler(CommandHandler("tambahshift", tambahshift_command))
+    app.add_handler(CommandHandler("hapusshift", hapusshift_command))
 
     # Command /query (manual trigger)
     app.add_handler(CommandHandler("query", query_command))
