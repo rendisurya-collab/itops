@@ -3110,6 +3110,7 @@ def _run_sla_scrape() -> dict:
         "Transfer L1",
         "Waiting User Confirmation",
         "Pending",
+        "Unassigned",
         "OverDue",
         "Onhold",
     ]
@@ -3122,14 +3123,6 @@ def _run_sla_scrape() -> dict:
         tickets = sdp.list_requests(100, status, groups)
         status_counts[status] = len(tickets)
         all_tickets.extend(tickets)
-
-    # Hitung Unassigned (tiket tanpa technician)
-    unassigned_count = 0
-    for t in all_tickets:
-        tech = t.get("technician")
-        if not tech or not tech.get("name"):
-            unassigned_count += 1
-    status_counts["Unassigned"] = unassigned_count
 
     # Ambil tiket Closed
     closed_tickets = sdp.list_requests(100, "Closed", groups)
@@ -3160,18 +3153,18 @@ def _run_sla_scrape() -> dict:
     # Hitung OverDue (sudah ada dari status check)
     overdue_count = status_counts.get("OverDue", 0)
 
-    # Parse assignee dari semua tiket aktif
+    # Parse assignee dari semua tiket aktif (hanya yang punya technician)
     technicians = []
     for t in all_tickets:
         tech = t.get("technician")
         if tech and tech.get("name"):
             technicians.append(tech["name"])
-        else:
-            technicians.append("Unassigned")
     counter = Counter(technicians)
 
     assignee_info = []
     for member in SLA_TEAM:
+        if member == "Unassigned":
+            continue
         count = counter.get(member, 0)
         if count > 0:
             assignee_info.append(f"  • {member} : {count}")
@@ -3199,33 +3192,42 @@ async def sla_monitor_job(context: ContextTypes.DEFAULT_TYPE):
     sc = result["status_counts"]
     now_str = dt.datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
 
+    # Format dengan monospace agar rata
+    status_lines = [
+        f"Open                      : {sc.get('Open', 0):>3}",
+        f"In Progress Investigation : {sc.get('In Progress Investigation', 0):>3}",
+        f"Transfer L1               : {sc.get('Transfer L1', 0):>3}",
+        f"Waiting User Confirmation : {sc.get('Waiting User Confirmation', 0):>3}",
+        f"Pending                   : {sc.get('Pending', 0):>3}",
+        f"Unassigned                : {sc.get('Unassigned', 0):>3}",
+        f"OverDue                   : {sc.get('OverDue', 0):>3}",
+        f"Onhold                    : {sc.get('Onhold', 0):>3}",
+        f"Closed                    : {sc.get('Closed', 0):>3}",
+    ]
+
+    summary_lines = [
+        f"Total Active Ticket       : {result['total_active']:>3}",
+        f"Solved (7 hari)           : {result['solved_this_week']:>3}",
+        f"Total OverDue             : {result['overdue_count']:>3}",
+    ]
+
     lines = [
         "🚨 <b>Ticket Update</b>",
-        "====================",
+        "━━━━━━━━━━━━━━━━━━━━━━",
         "",
-        f"Open                      : {sc.get('Open', 0)}",
-        f"In Progress Investigation : {sc.get('In Progress Investigation', 0)}",
-        f"Transfer L1               : {sc.get('Transfer L1', 0)}",
-        f"Waiting User Confirmation : {sc.get('Waiting User Confirmation', 0)}",
-        f"Pending                   : {sc.get('Pending', 0)}",
-        f"Unassigned                : {sc.get('Unassigned', 0)}",
-        f"OverDue                   : {sc.get('OverDue', 0)}",
-        f"Onhold                    : {sc.get('Onhold', 0)}",
-        f"Closed                    : {sc.get('Closed', 0)}",
+        "<pre>" + "\n".join(status_lines) + "</pre>",
         "",
-        f"<b>Total Active Ticket       : {result['total_active']}</b>",
-        f"<b>Solved (7 hari)           : {result['solved_this_week']}</b>",
-        f"<b>Total OverDue             : {result['overdue_count']}</b>",
+        "<pre>" + "\n".join(summary_lines) + "</pre>",
     ]
 
     if result["assignee_info"]:
         lines.append("")
-        lines.append("<b>Assigned To:</b>")
+        lines.append("<b>📋 Assigned To:</b>")
         lines.extend(result["assignee_info"])
 
     lines.append("")
-    lines.append(f"Time : {now_str}")
-    lines.append("====================")
+    lines.append(f"🕐 {now_str}")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
 
     await _broadcast_notify(context, "\n".join(lines))
     logger.info(f"SLA Monitor: berhasil kirim laporan ({result['total_active']} tiket aktif)")
@@ -3247,33 +3249,41 @@ async def ticketupdate_command(update: Update, context: ContextTypes.DEFAULT_TYP
     sc = result["status_counts"]
     now_str = dt.datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
 
+    status_lines = [
+        f"Open                      : {sc.get('Open', 0):>3}",
+        f"In Progress Investigation : {sc.get('In Progress Investigation', 0):>3}",
+        f"Transfer L1               : {sc.get('Transfer L1', 0):>3}",
+        f"Waiting User Confirmation : {sc.get('Waiting User Confirmation', 0):>3}",
+        f"Pending                   : {sc.get('Pending', 0):>3}",
+        f"Unassigned                : {sc.get('Unassigned', 0):>3}",
+        f"OverDue                   : {sc.get('OverDue', 0):>3}",
+        f"Onhold                    : {sc.get('Onhold', 0):>3}",
+        f"Closed                    : {sc.get('Closed', 0):>3}",
+    ]
+
+    summary_lines = [
+        f"Total Active Ticket       : {result['total_active']:>3}",
+        f"Solved (7 hari)           : {result['solved_this_week']:>3}",
+        f"Total OverDue             : {result['overdue_count']:>3}",
+    ]
+
     lines = [
-        "🚨 <b>Ticket Update</b>",
-        "====================",
+        "🚨 <b>Summary Ticket Status</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
         "",
-        f"Open                      : {sc.get('Open', 0)}",
-        f"In Progress Investigation : {sc.get('In Progress Investigation', 0)}",
-        f"Transfer L1               : {sc.get('Transfer L1', 0)}",
-        f"Waiting User Confirmation : {sc.get('Waiting User Confirmation', 0)}",
-        f"Pending                   : {sc.get('Pending', 0)}",
-        f"Unassigned                : {sc.get('Unassigned', 0)}",
-        f"OverDue                   : {sc.get('OverDue', 0)}",
-        f"Onhold                    : {sc.get('Onhold', 0)}",
-        f"Closed                    : {sc.get('Closed', 0)}",
+        "<pre>" + "\n".join(status_lines) + "</pre>",
         "",
-        f"<b>Total Active Ticket       : {result['total_active']}</b>",
-        f"<b>Solved (7 hari)           : {result['solved_this_week']}</b>",
-        f"<b>Total OverDue             : {result['overdue_count']}</b>",
+        "<pre>" + "\n".join(summary_lines) + "</pre>",
     ]
 
     if result["assignee_info"]:
         lines.append("")
-        lines.append("<b>Assigned To:</b>")
+        lines.append("<b>📋 Assigned To:</b>")
         lines.extend(result["assignee_info"])
 
     lines.append("")
-    lines.append(f"Time : {now_str}")
-    lines.append("====================")
+    lines.append(f"🕐 {now_str}")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
 
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
