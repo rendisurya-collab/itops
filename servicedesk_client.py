@@ -89,7 +89,7 @@ class SDPClient:
             "sort_field": "created_time",
             "sort_order": "desc",
             "get_total_count": True,
-            "fields_required": ["id", "subject", "status", "requester", "description", "group", "department", "category", "subcategory"],
+            "fields_required": ["id", "subject", "status", "requester", "description", "group", "department", "category", "subcategory", "technician"],
         }
         criteria = []
         if status:
