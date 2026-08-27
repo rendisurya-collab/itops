@@ -3110,7 +3110,6 @@ def _run_sla_scrape() -> dict:
         "Transfer L1",
         "Waiting User Confirmation",
         "Pending",
-        "Unassigned",
         "OverDue",
         "Onhold",
     ]
@@ -3123,6 +3122,14 @@ def _run_sla_scrape() -> dict:
         tickets = sdp.list_requests(100, status, groups)
         status_counts[status] = len(tickets)
         all_tickets.extend(tickets)
+
+    # Hitung Unassigned = tiket aktif yang TIDAK punya technician
+    unassigned_count = 0
+    for t in all_tickets:
+        tech = t.get("technician")
+        if not tech or not tech.get("name"):
+            unassigned_count += 1
+    status_counts["Unassigned"] = unassigned_count
 
     # Ambil tiket Closed
     closed_tickets = sdp.list_requests(100, "Closed", groups)
@@ -3169,7 +3176,7 @@ def _run_sla_scrape() -> dict:
         if count > 0:
             assignee_info.append(f"  • {member} : {count}")
 
-    total_active = sum(v for k, v in status_counts.items() if k not in ("Closed",))
+    total_active = sum(v for k, v in status_counts.items() if k not in ("Closed", "Unassigned"))
 
     return {
         "status_counts": status_counts,
@@ -3212,7 +3219,7 @@ async def sla_monitor_job(context: ContextTypes.DEFAULT_TYPE):
     ]
 
     lines = [
-        "🚨 <b>Ticket Update</b>",
+        "🚨 <b>Summary Ticket Status</b>",
         "━━━━━━━━━━━━━━━━━━━━━━",
         "",
         "<pre>" + "\n".join(status_lines) + "</pre>",
@@ -3235,7 +3242,7 @@ async def sla_monitor_job(context: ContextTypes.DEFAULT_TYPE):
 
 @restricted
 async def ticketupdate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler /ticketupdate — trigger manual notifikasi Ticket Update."""
+    """Handler /ticketupdate — trigger manual notifikasi Summary Ticket Status."""
     await update.message.reply_text("⏳ Mengambil data tiket dari SDP API...")
     try:
         result = await asyncio.to_thread(_run_sla_scrape)
