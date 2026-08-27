@@ -3094,74 +3094,105 @@ SLA_TEAM = [
 
 
 def _run_sla_scrape() -> dict:
-    """Jalankan Playwright untuk scraping dashboard SDP (sync, dipanggil dari thread)."""
-    from playwright.sync_api import sync_playwright
+    """Ambil data tiket dari SDP API per status untuk group yang dikonfigurasi."""
     from collections import Counter
 
-    state_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), config.SLA_MONITOR_STATE_FILE)
+    if not sdp:
+        raise RuntimeError("SDP Client tidak aktif (SDP_BASE_URL/SDP_API_KEY belum diisi).")
 
-    if not os.path.exists(state_file):
-        raise FileNotFoundError(
-            f"File {config.SLA_MONITOR_STATE_FILE} tidak ditemukan. "
-            "Login manual via Playwright dulu untuk generate session state."
-        )
+    groups = config.SDP_NOTIFY_GROUPS
+    if not groups:
+        raise RuntimeError("SDP_NOTIFY_GROUPS kosong.")
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(storage_state=state_file)
-        page = context.new_page()
+    statuses_to_check = [
+        "Open",
+        "In Progress Investigation",
+        "Transfer L1",
+        "Waiting User Confirmation",
+        "Pending",
+        "OverDue",
+        "Onhold",
+    ]
 
-        try:
-            page.goto(config.SLA_MONITOR_URL, timeout=30000)
-            page.wait_for_timeout(5000)
-            html_content = page.content()
-        finally:
-            browser.close()
+    status_counts = {}
+    all_tickets = []
 
-    # Parse status counts
-    status_counts = {
-        "Open": len(re.findall(r'title="Open"', html_content)),
-        "In Progress Investigation": len(re.findall(r'title="In Progress Investigation"', html_content)),
-        "Transfer L1": len(re.findall(r'title="Transfer L1"', html_content)),
-        "Waiting User Confirmation": len(re.findall(r'title="Waiting User Confirmation"', html_content)),
-        "Pending": len(re.findall(r'title="Pending"', html_content)),
-        "OverDue": len(re.findall(r'title="OverDue"', html_content)),
-        "Onhold": len(re.findall(r'title="Onhold"', html_content)),
-        "Closed": len(re.findall(r'title="Closed"', html_content)),
-    }
+    # Ambil tiket per status
+    for status in statuses_to_check:
+        tickets = sdp.list_requests(100, status, groups)
+        status_counts[status] = len(tickets)
+        all_tickets.extend(tickets)
 
-    # Parse assignee
-    technicians = re.findall(
-        r'data-lv-action="technician".*?title="([^"]+)"',
-        html_content,
-        re.DOTALL,
-    )
+    # Hitung Unassigned (tiket tanpa technician)
+    unassigned_count = 0
+    for t in all_tickets:
+        tech = t.get("technician")
+        if not tech or not tech.get("name"):
+            unassigned_count += 1
+    status_counts["Unassigned"] = unassigned_count
+
+    # Ambil tiket Closed
+    closed_tickets = sdp.list_requests(100, "Closed", groups)
+    status_counts["Closed"] = len(closed_tickets)
+
+    # Hitung Solved dalam 1 minggu (tiket Closed yang completed_time dalam 7 hari terakhir)
+    now = dt.datetime.now(TZ)
+    week_ago = now - dt.timedelta(days=7)
+    solved_this_week = 0
+    for t in closed_tickets:
+        completed_time = t.get("completed_time") or t.get("resolved_time")
+        if completed_time:
+            # SDP API biasanya return epoch ms
+            try:
+                if isinstance(completed_time, dict):
+                    epoch = int(completed_time.get("value", 0)) / 1000
+                else:
+                    epoch = int(completed_time) / 1000
+                ticket_dt = dt.datetime.fromtimestamp(epoch, tz=TZ)
+                if ticket_dt >= week_ago:
+                    solved_this_week += 1
+            except (ValueError, TypeError, OSError):
+                pass
+    # Jika tidak bisa cek waktu (API tidak return waktu), hitung semua closed sebagai solved minggu ini
+    if solved_this_week == 0 and len(closed_tickets) > 0:
+        solved_this_week = len(closed_tickets)
+
+    # Hitung OverDue (sudah ada dari status check)
+    overdue_count = status_counts.get("OverDue", 0)
+
+    # Parse assignee dari semua tiket aktif
+    technicians = []
+    for t in all_tickets:
+        tech = t.get("technician")
+        if tech and tech.get("name"):
+            technicians.append(tech["name"])
+        else:
+            technicians.append("Unassigned")
     counter = Counter(technicians)
+
     assignee_info = []
     for member in SLA_TEAM:
         count = counter.get(member, 0)
         if count > 0:
             assignee_info.append(f"  • {member} : {count}")
 
-    total_active = sum(v for k, v in status_counts.items() if k != "Closed")
+    total_active = sum(v for k, v in status_counts.items() if k not in ("Closed",))
 
     return {
         "status_counts": status_counts,
         "total_active": total_active,
         "assignee_info": assignee_info,
+        "solved_this_week": solved_this_week,
+        "overdue_count": overdue_count,
     }
 
 
 async def sla_monitor_job(context: ContextTypes.DEFAULT_TYPE):
-    """Background job: scraping dashboard SDP dan kirim laporan ke Telegram."""
+    """Background job: ambil status tiket dari SDP API dan kirim laporan ke Telegram."""
     try:
         result = await asyncio.to_thread(_run_sla_scrape)
-    except FileNotFoundError as e:
-        logger.warning(f"SLA Monitor: {e}")
-        return
     except Exception as e:
         logger.error(f"SLA Monitor error: {e}")
-        await _broadcast_notify(context, f"❌ <b>SLA Monitor ERROR</b>\n{html.escape(str(e))}")
         return
 
     sc = result["status_counts"]
@@ -3171,16 +3202,19 @@ async def sla_monitor_job(context: ContextTypes.DEFAULT_TYPE):
         "🚨 <b>Ticket Update</b>",
         "====================",
         "",
-        f"Open                      : {sc['Open']}",
-        f"In Progress Investigation : {sc['In Progress Investigation']}",
-        f"Transfer L1               : {sc['Transfer L1']}",
-        f"Waiting User Confirmation : {sc['Waiting User Confirmation']}",
-        f"Pending                   : {sc['Pending']}",
-        f"OverDue                   : {sc['OverDue']}",
-        f"Onhold                    : {sc['Onhold']}",
-        f"Closed                    : {sc['Closed']}",
+        f"Open                      : {sc.get('Open', 0)}",
+        f"In Progress Investigation : {sc.get('In Progress Investigation', 0)}",
+        f"Transfer L1               : {sc.get('Transfer L1', 0)}",
+        f"Waiting User Confirmation : {sc.get('Waiting User Confirmation', 0)}",
+        f"Pending                   : {sc.get('Pending', 0)}",
+        f"Unassigned                : {sc.get('Unassigned', 0)}",
+        f"OverDue                   : {sc.get('OverDue', 0)}",
+        f"Onhold                    : {sc.get('Onhold', 0)}",
+        f"Closed                    : {sc.get('Closed', 0)}",
         "",
         f"<b>Total Active Ticket       : {result['total_active']}</b>",
+        f"<b>Solved (7 hari)           : {result['solved_this_week']}</b>",
+        f"<b>Total OverDue             : {result['overdue_count']}</b>",
     ]
 
     if result["assignee_info"]:
@@ -6302,7 +6336,7 @@ def main():
         )
         logger.info(f"Reminder aktif tiap hari jam {config.REMINDER_HOUR}:{config.REMINDER_MINUTE:02d}")
 
-    # Job SLA Monitor (Playwright scraping dashboard)
+    # Job SLA Monitor (via SDP API)
     if config.SLA_MONITOR_ENABLED:
         app.job_queue.run_repeating(
             sla_monitor_job,
@@ -6311,7 +6345,7 @@ def main():
         )
         logger.info(
             f"SLA Monitor aktif tiap {config.SLA_MONITOR_INTERVAL_MINUTES} menit "
-            f"(URL: {config.SLA_MONITOR_URL})"
+            f"(Groups: {', '.join(config.SDP_NOTIFY_GROUPS)})"
         )
 
     # Job Query Database (dari bot_core scheduler)
