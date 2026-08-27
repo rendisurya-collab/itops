@@ -3193,6 +3193,7 @@ async def sla_monitor_job(context: ContextTypes.DEFAULT_TYPE):
         result = await asyncio.to_thread(_run_sla_scrape)
     except Exception as e:
         logger.error(f"SLA Monitor error: {e}")
+        await _broadcast_notify(context, f"❌ <b>SLA Monitor ERROR</b>\n<code>{html.escape(str(e))}</code>")
         return
 
     sc = result["status_counts"]
@@ -3228,6 +3229,53 @@ async def sla_monitor_job(context: ContextTypes.DEFAULT_TYPE):
 
     await _broadcast_notify(context, "\n".join(lines))
     logger.info(f"SLA Monitor: berhasil kirim laporan ({result['total_active']} tiket aktif)")
+
+
+@restricted
+async def ticketupdate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /ticketupdate — trigger manual notifikasi Ticket Update."""
+    await update.message.reply_text("⏳ Mengambil data tiket dari SDP API...")
+    try:
+        result = await asyncio.to_thread(_run_sla_scrape)
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ <b>Gagal ambil data tiket:</b>\n<code>{html.escape(str(e))}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    sc = result["status_counts"]
+    now_str = dt.datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+    lines = [
+        "🚨 <b>Ticket Update</b>",
+        "====================",
+        "",
+        f"Open                      : {sc.get('Open', 0)}",
+        f"In Progress Investigation : {sc.get('In Progress Investigation', 0)}",
+        f"Transfer L1               : {sc.get('Transfer L1', 0)}",
+        f"Waiting User Confirmation : {sc.get('Waiting User Confirmation', 0)}",
+        f"Pending                   : {sc.get('Pending', 0)}",
+        f"Unassigned                : {sc.get('Unassigned', 0)}",
+        f"OverDue                   : {sc.get('OverDue', 0)}",
+        f"Onhold                    : {sc.get('Onhold', 0)}",
+        f"Closed                    : {sc.get('Closed', 0)}",
+        "",
+        f"<b>Total Active Ticket       : {result['total_active']}</b>",
+        f"<b>Solved (7 hari)           : {result['solved_this_week']}</b>",
+        f"<b>Total OverDue             : {result['overdue_count']}</b>",
+    ]
+
+    if result["assignee_info"]:
+        lines.append("")
+        lines.append("<b>Assigned To:</b>")
+        lines.extend(result["assignee_info"])
+
+    lines.append("")
+    lines.append(f"Time : {now_str}")
+    lines.append("====================")
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 # ==============================================================================
@@ -6266,6 +6314,7 @@ def main():
     app.add_handler(CommandHandler("hapusshift", hapusshift_command))
     app.add_handler(CommandHandler("updatetimeshift", updatetimeshift_command))
     app.add_handler(CommandHandler("testsheets", testsheets_command))
+    app.add_handler(CommandHandler("ticketupdate", ticketupdate_command))
 
     # Command /query (manual trigger)
     app.add_handler(CommandHandler("query", query_command))
