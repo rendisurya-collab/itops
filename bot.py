@@ -2350,12 +2350,10 @@ async def list_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(_safe_telegram_text("\n".join(lines).rstrip()))
 
 
-async def guide_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _is_allowed_chat(update.effective_chat.id):
-        return
-    text = update.message.text
-
-    # 1. Cek Bank Data / Knowledge Base dulu
+async def _answer_kb_or_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    """Cek KB → jawab. Kalau tidak ketemu, cek guidance. Kalau tetap tidak,
+    fallback + simpan pertanyaan ke pending."""
+    # 1. Cek Bank Data / Knowledge Base
     faq = kb_store.find_answer(text)
     if faq:
         await update.message.reply_text(
@@ -2384,6 +2382,50 @@ async def guide_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🙏 Maaf, saya belum punya jawaban untuk pertanyaan ini.\n"
         "Pertanyaan kamu sudah dicatat dan akan dijawab oleh admin. Terima kasih!"
     )
+
+
+@restricted
+async def tanya_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /tanya <pertanyaan> — tanya ke Bank Data secara eksplisit."""
+    question = update.message.text.partition(" ")[2].strip()
+    if not question:
+        await update.message.reply_text(
+            "Tulis pertanyaannya setelah /tanya.\n"
+            "Contoh: <code>/tanya server apa yang sedang issue?</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    await _answer_kb_or_fallback(update, context, question)
+
+
+async def guide_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed_chat(update.effective_chat.id):
+        return
+
+    chat_type = update.effective_chat.type  # 'private', 'group', 'supergroup'
+    text = update.message.text or ""
+
+    # Di GRUP: bot hanya merespons kalau di-mention (@bot) atau reply ke pesan bot.
+    # Ini mencegah bot spam menjawab semua obrolan di grup notifikasi.
+    if chat_type in ("group", "supergroup"):
+        bot_username = (context.bot.username or "").lower()
+        is_mention = bot_username and f"@{bot_username}" in text.lower()
+        is_reply_to_bot = (
+            update.message.reply_to_message is not None
+            and update.message.reply_to_message.from_user is not None
+            and update.message.reply_to_message.from_user.id == context.bot.id
+        )
+        if not (is_mention or is_reply_to_bot):
+            # Diam saja untuk obrolan biasa; user tetap bisa pakai /tanya
+            return
+        # Bersihkan mention dari teks pertanyaan
+        if is_mention:
+            text = text.replace(f"@{context.bot.username}", "").strip()
+
+    if not text:
+        return
+
+    await _answer_kb_or_fallback(update, context, text)
 
 
 # ==============================================================================
@@ -6754,6 +6796,7 @@ def main():
     app.add_handler(CommandHandler("overdue", overdue_command))
 
     # Knowledge Base / Bank Data commands
+    app.add_handler(CommandHandler("tanya", tanya_command))
     app.add_handler(CommandHandler("addfaq", addfaq_command))
     app.add_handler(CommandHandler("listfaq", listfaq_command))
     app.add_handler(CommandHandler("delfaq", delfaq_command))
