@@ -1,0 +1,11 @@
+{
+  "active_faqs": [
+    {
+      "id": 1,
+      "keywords": ["server down", "server issue", "koneksi", "jaringan"],
+      "question": "Server apa yang sedang issue?",
+      "answer": "Server jaringan lokal sedang dalam perbaikan. Estimasi normal kembali akan diinformasikan lebih lanjut."
+    }
+  ],
+  "pending_questions": []
+}

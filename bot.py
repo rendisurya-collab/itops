@@ -28,6 +28,7 @@ from telegram.warnings import PTBUserWarning
 
 import config
 import guidance_store
+import kb_store
 import user_accounts
 from export_excel import build_export_excel
 from jira_client import JiraClient, JiraError
@@ -2353,10 +2354,229 @@ async def guide_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed_chat(update.effective_chat.id):
         return
     text = update.message.text
-    matches = guidance_store.find_matches(text)
-    if not matches:
+
+    # 1. Cek Bank Data / Knowledge Base dulu
+    faq = kb_store.find_answer(text)
+    if faq:
+        await update.message.reply_text(
+            f"💡 <b>{html.escape(faq.get('question', ''))}</b>\n\n"
+            f"{html.escape(faq.get('answer', ''))}",
+            parse_mode=ParseMode.HTML,
+        )
         return
-    await send_guidance_matches(update, context, text, matches)
+
+    # 2. Cek guidance store
+    matches = guidance_store.find_matches(text)
+    if matches:
+        await send_guidance_matches(update, context, text, matches)
+        return
+
+    # 3. Tidak ketemu: fallback + simpan pertanyaan ke pending (auto)
+    user = update.effective_user
+    user_name = user.full_name if user else ""
+    user_id = user.id if user else ""
+    try:
+        kb_store.add_pending(text, user_id, user_name)
+    except Exception as e:
+        logger.error(f"Gagal simpan pertanyaan pending KB: {e}")
+
+    await update.message.reply_text(
+        "🙏 Maaf, saya belum punya jawaban untuk pertanyaan ini.\n"
+        "Pertanyaan kamu sudah dicatat dan akan dijawab oleh admin. Terima kasih!"
+    )
+
+
+# ==============================================================================
+# KNOWLEDGE BASE / BANK DATA - ADMIN COMMANDS
+# ==============================================================================
+
+@restricted
+async def addfaq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /addfaq <pertanyaan> | <jawaban> [| keyword1, keyword2]"""
+    raw = update.message.text.partition(" ")[2].strip()  # buang '/addfaq'
+    if not raw or "|" not in raw:
+        await update.message.reply_text(
+            "<b>📚 Tambah FAQ ke Bank Data</b>\n\n"
+            "Format:\n"
+            "<code>/addfaq pertanyaan | jawaban</code>\n"
+            "<code>/addfaq pertanyaan | jawaban | keyword1, keyword2</code>\n\n"
+            "Contoh:\n"
+            "<code>/addfaq Server apa yang issue? | Server jaringan lokal | server, jaringan, down</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    parts = [p.strip() for p in raw.split("|")]
+    question = parts[0]
+    answer = parts[1] if len(parts) > 1 else ""
+    keywords = None
+    if len(parts) > 2 and parts[2]:
+        keywords = [k.strip() for k in parts[2].split(",") if k.strip()]
+
+    if not question or not answer:
+        await update.message.reply_text(
+            "⚠️ Pertanyaan dan jawaban tidak boleh kosong. Format:\n"
+            "<code>/addfaq pertanyaan | jawaban</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    try:
+        entry = kb_store.add_faq(question, answer, keywords)
+        kw_text = ", ".join(entry["keywords"]) if entry["keywords"] else "(otomatis dari pertanyaan)"
+        await update.message.reply_text(
+            f"✅ <b>FAQ berhasil ditambahkan!</b>\n\n"
+            f"🆔 ID: <code>{entry['id']}</code>\n"
+            f"❓ Pertanyaan: {html.escape(entry['question'])}\n"
+            f"💬 Jawaban: {html.escape(entry['answer'])}\n"
+            f"🔑 Keywords: {html.escape(kw_text)}",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ Gagal tambah FAQ:\n<code>{html.escape(str(e))}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+
+
+@restricted
+async def listfaq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /listfaq — tampilkan semua FAQ aktif."""
+    faqs = kb_store.list_faqs()
+    if not faqs:
+        await update.message.reply_text("📭 Belum ada FAQ di Bank Data. Tambah dengan /addfaq.")
+        return
+
+    lines = ["<b>📚 Daftar FAQ Aktif</b>", "━━━━━━━━━━━━━━━━━━━━━━", ""]
+    for f in faqs:
+        kw = ", ".join(f.get("keywords", []))
+        lines.append(
+            f"🆔 <b>{f.get('id')}</b> — {html.escape(f.get('question', ''))}\n"
+            f"   💬 {html.escape(f.get('answer', ''))}\n"
+            f"   🔑 {html.escape(kw)}"
+        )
+        lines.append("")
+    lines.append("Hapus dengan: <code>/delfaq &lt;id&gt;</code>")
+
+    text = "\n".join(lines)
+    # Potong kalau kepanjangan (batas telegram ~4096)
+    if len(text) > 3900:
+        text = text[:3900] + "\n\n... (terpotong)"
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
+@restricted
+async def delfaq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /delfaq <id> — hapus FAQ."""
+    if not context.args:
+        await update.message.reply_text(
+            "Format: <code>/delfaq &lt;id&gt;</code>\nContoh: <code>/delfaq 3</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    try:
+        faq_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("⚠️ ID harus angka. Contoh: <code>/delfaq 3</code>", parse_mode=ParseMode.HTML)
+        return
+
+    if kb_store.delete_faq(faq_id):
+        await update.message.reply_text(f"✅ FAQ ID <code>{faq_id}</code> berhasil dihapus.", parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text(f"ℹ️ FAQ ID <code>{faq_id}</code> tidak ditemukan.", parse_mode=ParseMode.HTML)
+
+
+@restricted
+async def pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /pending — tampilkan pertanyaan user yang belum terjawab."""
+    pendings = kb_store.list_pending(only_unanswered=True)
+    if not pendings:
+        await update.message.reply_text("✅ Tidak ada pertanyaan pending. Semua sudah terjawab!")
+        return
+
+    lines = ["<b>📥 Pertanyaan Pending (belum terjawab)</b>", "━━━━━━━━━━━━━━━━━━━━━━", ""]
+    for p in pendings:
+        uname = p.get("user_name") or p.get("user_id", "")
+        lines.append(
+            f"🆔 <b>{p.get('id')}</b> — dari {html.escape(str(uname))}\n"
+            f"   ❓ {html.escape(p.get('question', ''))}\n"
+            f"   🕐 {p.get('created_at', '')}"
+        )
+        lines.append("")
+    lines.append("Jawab dengan: <code>/answerfaq &lt;id&gt; | &lt;jawaban&gt;</code>")
+
+    text = "\n".join(lines)
+    if len(text) > 3900:
+        text = text[:3900] + "\n\n... (terpotong)"
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
+@restricted
+async def answerfaq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /answerfaq <id> | <jawaban> — jawab pertanyaan pending.
+
+    Jawaban akan otomatis dipromosikan menjadi FAQ aktif, dan (jika di grup
+    berbeda) tidak dikirim ulang ke user. User bisa tanya lagi untuk dapat jawaban.
+    """
+    raw = update.message.text.partition(" ")[2].strip()  # buang '/answerfaq'
+    if not raw or "|" not in raw:
+        await update.message.reply_text(
+            "Format:\n<code>/answerfaq &lt;id&gt; | &lt;jawaban&gt;</code>\n\n"
+            "Contoh:\n<code>/answerfaq 101 | Silakan restart aplikasi lalu coba lagi.</code>\n\n"
+            "Lihat daftar pending dengan /pending",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    id_part, _, answer = raw.partition("|")
+    id_part = id_part.strip()
+    answer = answer.strip()
+
+    try:
+        pending_id = int(id_part)
+    except ValueError:
+        await update.message.reply_text("⚠️ ID harus angka. Lihat /pending untuk daftar ID.", parse_mode=ParseMode.HTML)
+        return
+
+    if not answer:
+        await update.message.reply_text("⚠️ Jawaban tidak boleh kosong.", parse_mode=ParseMode.HTML)
+        return
+
+    result = kb_store.answer_pending(pending_id, answer)
+    if result is None:
+        await update.message.reply_text(
+            f"ℹ️ Pertanyaan pending ID <code>{pending_id}</code> tidak ditemukan.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    pending = result["pending"]
+    faq = result["faq"]
+
+    # Konfirmasi ke admin
+    await update.message.reply_text(
+        f"✅ <b>Pertanyaan terjawab & ditambahkan ke FAQ!</b>\n\n"
+        f"❓ {html.escape(pending.get('question', ''))}\n"
+        f"💬 {html.escape(answer)}\n\n"
+        f"FAQ baru dibuat dengan ID <code>{faq.get('id')}</code>.",
+        parse_mode=ParseMode.HTML,
+    )
+
+    # Coba kirim jawaban langsung ke user penanya (best-effort)
+    user_id = pending.get("user_id")
+    if user_id:
+        try:
+            await context.bot.send_message(
+                chat_id=int(user_id),
+                text=(
+                    f"💡 <b>Jawaban untuk pertanyaan kamu:</b>\n\n"
+                    f"❓ {html.escape(pending.get('question', ''))}\n\n"
+                    f"{html.escape(answer)}"
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as e:
+            logger.info(f"Tidak bisa kirim jawaban langsung ke user {user_id}: {e}")
 
 
 @restricted
@@ -6532,6 +6752,13 @@ def main():
     app.add_handler(CommandHandler("testsheets", testsheets_command))
     app.add_handler(CommandHandler("ticketupdate", ticketupdate_command))
     app.add_handler(CommandHandler("overdue", overdue_command))
+
+    # Knowledge Base / Bank Data commands
+    app.add_handler(CommandHandler("addfaq", addfaq_command))
+    app.add_handler(CommandHandler("listfaq", listfaq_command))
+    app.add_handler(CommandHandler("delfaq", delfaq_command))
+    app.add_handler(CommandHandler("pending", pending_command))
+    app.add_handler(CommandHandler("answerfaq", answerfaq_command))
 
     # Command /query (manual trigger)
     app.add_handler(CommandHandler("query", query_command))
