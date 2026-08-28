@@ -1,104 +1,95 @@
-"""Knowledge Base / Bank Data store.
+"""Knowledge Base / Bank Data store — backed by Google Sheets.
 
 Menyimpan FAQ aktif dan pertanyaan user yang belum terjawab (pending) di
-file JSON `knowledge_base.json`. Selalu baca ulang dari file supaya perubahan
-manual lewat text editor langsung kepakai tanpa restart bot.
+Google Sheets (spreadsheet yang sama dengan ticket log), pada dua tab:
 
-Struktur file:
-{
-  "active_faqs": [
-    {"id": 1, "keywords": [...], "question": "...", "answer": "..."}
-  ],
-  "pending_questions": [
-    {"id": 101, "user_id": "...", "user_name": "...", "question": "...",
-     "status": "unanswered", "created_at": "..."}
-  ]
-}
+- Tab "FAQ"        : ID | Keywords | Question | Answer
+- Tab "PendingFAQ" : ID | User ID | User Name | Question | Status | Answer | Created At | Answered At
+
+Data tidak hilang saat Railway redeploy karena tersimpan di Google Sheets.
+
+Fungsi publik tetap sama seperti versi JSON supaya bot.py tidak perlu diubah:
+  add_faq, delete_faq, list_faqs, find_answer,
+  add_pending, list_pending, get_pending, answer_pending, delete_pending
 """
 
 import json
-import os
+import logging
 import datetime as dt
 
-KB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge_base.json")
+import config
 
-_DEFAULT = {"active_faqs": [], "pending_questions": []}
+logger = logging.getLogger(__name__)
 
+FAQ_TAB = "FAQ"
+PENDING_TAB = "PendingFAQ"
 
-def _ensure_file():
-    if not os.path.exists(KB_FILE):
-        with open(KB_FILE, "w", encoding="utf-8") as f:
-            json.dump(_DEFAULT, f, ensure_ascii=False, indent=2)
+FAQ_HEADER = ["ID", "Keywords", "Question", "Answer"]
+PENDING_HEADER = ["ID", "User ID", "User Name", "Question", "Status", "Answer", "Created At", "Answered At"]
 
-
-def load_kb() -> dict:
-    """Baca seluruh knowledge base dari file."""
-    _ensure_file()
-    try:
-        with open(KB_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
-        return {"active_faqs": [], "pending_questions": []}
-
-    if not isinstance(data, dict):
-        return {"active_faqs": [], "pending_questions": []}
-    data.setdefault("active_faqs", [])
-    data.setdefault("pending_questions", [])
-    return data
-
-
-def save_kb(data: dict):
-    with open(KB_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-def _next_id(items: list) -> int:
-    max_id = 0
-    for item in items:
-        try:
-            max_id = max(max_id, int(item.get("id", 0)))
-        except (ValueError, TypeError):
-            continue
-    return max_id + 1
+# Cache spreadsheet object supaya tidak auth berulang tiap operasi
+_SPREADSHEET = None
 
 
 def _now_str() -> str:
     return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-# ---------------------------------------------------------------------------
-# FAQ AKTIF
-# ---------------------------------------------------------------------------
+def _get_spreadsheet():
+    """Return spreadsheet gspread (cached), atau None kalau credentials kosong."""
+    global _SPREADSHEET
+    if _SPREADSHEET is not None:
+        return _SPREADSHEET
 
-def add_faq(question: str, answer: str, keywords: list = None) -> dict:
-    """Tambah FAQ baru ke active_faqs. Keywords auto dari pertanyaan bila kosong."""
-    data = load_kb()
-    if not keywords:
-        # Ambil kata bermakna dari pertanyaan sebagai keyword default
-        keywords = _auto_keywords(question)
-    entry = {
-        "id": _next_id(data["active_faqs"]),
-        "keywords": [k.strip().lower() for k in keywords if k.strip()],
-        "question": question.strip(),
-        "answer": answer.strip(),
-    }
-    data["active_faqs"].append(entry)
-    save_kb(data)
-    return entry
+    creds_json = config.GOOGLE_SHEETS_CREDENTIALS
+    sheet_id = config.GOOGLE_SHEETS_SPREADSHEET_ID
+    if not creds_json or not sheet_id:
+        logger.warning("Knowledge Base: GOOGLE_SHEETS credentials/spreadsheet ID kosong.")
+        return None
 
+    import gspread
+    from google.oauth2.service_account import Credentials
 
-def delete_faq(faq_id: int) -> bool:
-    data = load_kb()
-    before = len(data["active_faqs"])
-    data["active_faqs"] = [f for f in data["active_faqs"] if int(f.get("id", 0)) != int(faq_id)]
-    if len(data["active_faqs"]) == before:
-        return False
-    save_kb(data)
-    return True
+    creds_dict = json.loads(creds_json)
+    credentials = Credentials.from_service_account_info(
+        creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    gc = gspread.authorize(credentials)
+    _SPREADSHEET = gc.open_by_key(sheet_id)
+    return _SPREADSHEET
 
 
-def list_faqs() -> list:
-    return load_kb()["active_faqs"]
+def _get_worksheet(tab: str, header: list):
+    """Return worksheet, buat dengan header kalau belum ada."""
+    ss = _get_spreadsheet()
+    if ss is None:
+        raise RuntimeError("Google Sheets credentials atau spreadsheet ID kosong.")
+    try:
+        ws = ss.worksheet(tab)
+    except Exception:
+        ws = ss.add_worksheet(title=tab, rows=1000, cols=len(header))
+        ws.append_row(header, value_input_option="USER_ENTERED")
+    return ws
+
+
+def _faq_ws():
+    return _get_worksheet(FAQ_TAB, FAQ_HEADER)
+
+
+def _pending_ws():
+    return _get_worksheet(PENDING_TAB, PENDING_HEADER)
+
+
+def _next_id(rows: list, col_idx: int = 0) -> int:
+    """rows = list baris (tanpa header). col_idx = index kolom ID."""
+    max_id = 0
+    for r in rows:
+        if len(r) > col_idx and r[col_idx]:
+            try:
+                max_id = max(max_id, int(r[col_idx]))
+            except (ValueError, TypeError):
+                continue
+    return max_id + 1
 
 
 def _auto_keywords(text: str) -> list:
@@ -116,21 +107,84 @@ def _auto_keywords(text: str) -> list:
     return words[:8]
 
 
-# ---------------------------------------------------------------------------
-# PENCARIAN (matching FAQ vs pertanyaan user)
-# ---------------------------------------------------------------------------
-
 def _tokenize(text: str) -> set:
     cleaned = text.lower().replace("?", " ").replace(",", " ").replace(".", " ").replace("!", " ")
     return {w for w in cleaned.split() if w}
 
 
-def find_answer(query: str) -> dict:
-    """Cari FAQ terbaik untuk pertanyaan user.
+# ---------------------------------------------------------------------------
+# FAQ AKTIF
+# ---------------------------------------------------------------------------
 
-    Return dict FAQ yang cocok (dengan skor tertinggi), atau None kalau tidak ada
-    yang cukup relevan. Kombinasi substring match + token overlap sederhana.
-    """
+def list_faqs() -> list:
+    """Return list of dict FAQ aktif."""
+    try:
+        ws = _faq_ws()
+        rows = ws.get_all_values()
+    except Exception as e:
+        logger.error(f"Gagal baca FAQ dari Sheets: {e}")
+        return []
+
+    faqs = []
+    for r in rows[1:]:  # skip header
+        if len(r) < 4 or not r[0]:
+            continue
+        try:
+            fid = int(r[0])
+        except (ValueError, TypeError):
+            continue
+        keywords = [k.strip().lower() for k in r[1].split(",") if k.strip()]
+        faqs.append({
+            "id": fid,
+            "keywords": keywords,
+            "question": r[2].strip(),
+            "answer": r[3].strip(),
+        })
+    return faqs
+
+
+def add_faq(question: str, answer: str, keywords: list = None) -> dict:
+    """Tambah FAQ baru ke tab FAQ."""
+    ws = _faq_ws()
+    rows = ws.get_all_values()
+    new_id = _next_id(rows[1:], 0)
+
+    if not keywords:
+        keywords = _auto_keywords(question)
+    kw_clean = [k.strip().lower() for k in keywords if k.strip()]
+
+    ws.append_row(
+        [new_id, ", ".join(kw_clean), question.strip(), answer.strip()],
+        value_input_option="USER_ENTERED",
+    )
+    return {
+        "id": new_id,
+        "keywords": kw_clean,
+        "question": question.strip(),
+        "answer": answer.strip(),
+    }
+
+
+def delete_faq(faq_id: int) -> bool:
+    ws = _faq_ws()
+    rows = ws.get_all_values()
+    for idx, r in enumerate(rows[1:], start=2):  # 1-based, skip header
+        if r and r[0]:
+            try:
+                if int(r[0]) == int(faq_id):
+                    ws.delete_rows(idx)
+                    return True
+            except (ValueError, TypeError):
+                continue
+    return False
+
+
+# ---------------------------------------------------------------------------
+# PENCARIAN (matching FAQ vs pertanyaan user)
+# ---------------------------------------------------------------------------
+
+def find_answer(query: str) -> dict:
+    """Cari FAQ terbaik untuk pertanyaan user. Return dict FAQ atau None."""
     query_lower = query.lower().strip()
     if len(query_lower) < 2:
         return None
@@ -139,18 +193,16 @@ def find_answer(query: str) -> dict:
     best = None
     best_score = 0
 
-    for faq in load_kb()["active_faqs"]:
+    for faq in list_faqs():
         score = 0
 
-        # 1. Match pertanyaan (substring dua arah)
         q_faq = faq.get("question", "").lower().strip()
         if q_faq:
             if q_faq == query_lower:
-                score += 10  # exact match
+                score += 10
             elif q_faq in query_lower or query_lower in q_faq:
                 score += 5
 
-        # 2. Match keyword (frasa) — substring
         for kw in faq.get("keywords", []):
             kw = kw.strip().lower()
             if not kw:
@@ -158,12 +210,10 @@ def find_answer(query: str) -> dict:
             if kw in query_lower:
                 score += 4
             else:
-                # token overlap: semua kata di keyword ada di pertanyaan user
                 kw_tokens = _tokenize(kw)
                 if kw_tokens and kw_tokens.issubset(query_tokens):
                     score += 3
 
-        # 3. Token overlap pertanyaan FAQ vs user
         faq_tokens = _tokenize(q_faq)
         if faq_tokens:
             overlap = len(faq_tokens & query_tokens)
@@ -174,7 +224,6 @@ def find_answer(query: str) -> dict:
             best_score = score
             best = faq
 
-    # Ambang minimal supaya tidak asal match
     return best if best_score >= 3 else None
 
 
@@ -182,84 +231,138 @@ def find_answer(query: str) -> dict:
 # PERTANYAAN PENDING (belum terjawab)
 # ---------------------------------------------------------------------------
 
-def add_pending(question: str, user_id: str, user_name: str = "") -> dict:
-    """Simpan pertanyaan user yang belum terjawab. Hindari duplikat teks yang sama
-    dari user yang sama dan masih unanswered."""
-    data = load_kb()
-    q_norm = question.strip().lower()
-
-    for p in data["pending_questions"]:
-        if (
-            p.get("status") == "unanswered"
-            and str(p.get("user_id")) == str(user_id)
-            and p.get("question", "").strip().lower() == q_norm
-        ):
-            return p  # sudah ada, jangan duplikat
-
-    entry = {
-        "id": _next_id(data["pending_questions"]),
-        "user_id": str(user_id),
-        "user_name": user_name,
-        "question": question.strip(),
-        "status": "unanswered",
-        "created_at": _now_str(),
-    }
-    data["pending_questions"].append(entry)
-    save_kb(data)
-    return entry
+def _read_pending_rows() -> list:
+    """Return (worksheet, rows_all_values)."""
+    ws = _pending_ws()
+    return ws, ws.get_all_values()
 
 
 def list_pending(only_unanswered: bool = True) -> list:
-    items = load_kb()["pending_questions"]
-    if only_unanswered:
-        return [p for p in items if p.get("status") == "unanswered"]
-    return items
+    try:
+        _, rows = _read_pending_rows()
+    except Exception as e:
+        logger.error(f"Gagal baca PendingFAQ dari Sheets: {e}")
+        return []
+
+    result = []
+    for r in rows[1:]:
+        if len(r) < 5 or not r[0]:
+            continue
+        try:
+            pid = int(r[0])
+        except (ValueError, TypeError):
+            continue
+        status = r[4].strip() if len(r) > 4 else "unanswered"
+        if only_unanswered and status != "unanswered":
+            continue
+        result.append({
+            "id": pid,
+            "user_id": r[1].strip() if len(r) > 1 else "",
+            "user_name": r[2].strip() if len(r) > 2 else "",
+            "question": r[3].strip() if len(r) > 3 else "",
+            "status": status,
+            "answer": r[5].strip() if len(r) > 5 else "",
+            "created_at": r[6].strip() if len(r) > 6 else "",
+        })
+    return result
 
 
 def get_pending(pending_id: int) -> dict:
-    for p in load_kb()["pending_questions"]:
+    for p in list_pending(only_unanswered=False):
         if int(p.get("id", 0)) == int(pending_id):
             return p
     return None
 
 
-def answer_pending(pending_id: int, answer: str) -> dict:
-    """Jawab pertanyaan pending: tandai answered DAN promosikan jadi FAQ aktif.
+def add_pending(question: str, user_id: str, user_name: str = "") -> dict:
+    """Simpan pertanyaan user yang belum terjawab (hindari duplikat unanswered
+    dari user & teks yang sama)."""
+    ws, rows = _read_pending_rows()
+    q_norm = question.strip().lower()
 
-    Return dict berisi {"pending": ..., "faq": ...} atau None kalau id tidak ada.
+    for r in rows[1:]:
+        if len(r) < 5:
+            continue
+        status = r[4].strip() if len(r) > 4 else ""
+        r_uid = r[1].strip() if len(r) > 1 else ""
+        r_q = r[3].strip().lower() if len(r) > 3 else ""
+        if status == "unanswered" and r_uid == str(user_id) and r_q == q_norm:
+            # sudah ada, jangan duplikat
+            return {
+                "id": int(r[0]) if r[0] else 0,
+                "user_id": r_uid,
+                "user_name": r[2].strip() if len(r) > 2 else "",
+                "question": question.strip(),
+                "status": "unanswered",
+            }
+
+    new_id = _next_id(rows[1:], 0)
+    created = _now_str()
+    ws.append_row(
+        [new_id, str(user_id), user_name, question.strip(), "unanswered", "", created, ""],
+        value_input_option="USER_ENTERED",
+    )
+    return {
+        "id": new_id,
+        "user_id": str(user_id),
+        "user_name": user_name,
+        "question": question.strip(),
+        "status": "unanswered",
+        "created_at": created,
+    }
+
+
+def answer_pending(pending_id: int, answer: str) -> dict:
+    """Tandai pending answered + promosikan jadi FAQ aktif.
+
+    Return {"pending": ..., "faq": ...} atau None kalau id tidak ada.
     """
-    data = load_kb()
+    ws, rows = _read_pending_rows()
+    target_row_idx = None
     target = None
-    for p in data["pending_questions"]:
-        if int(p.get("id", 0)) == int(pending_id):
-            target = p
-            break
+
+    for idx, r in enumerate(rows[1:], start=2):  # 1-based, skip header
+        if r and r[0]:
+            try:
+                if int(r[0]) == int(pending_id):
+                    target_row_idx = idx
+                    target = {
+                        "id": int(r[0]),
+                        "user_id": r[1].strip() if len(r) > 1 else "",
+                        "user_name": r[2].strip() if len(r) > 2 else "",
+                        "question": r[3].strip() if len(r) > 3 else "",
+                        "status": r[4].strip() if len(r) > 4 else "",
+                    }
+                    break
+            except (ValueError, TypeError):
+                continue
+
     if target is None:
         return None
 
+    answered_at = _now_str()
+    # Update kolom Status (E), Answer (F), Answered At (H)
+    ws.update(f"E{target_row_idx}", [["answered"]])
+    ws.update(f"F{target_row_idx}", [[answer.strip()]])
+    ws.update(f"H{target_row_idx}", [[answered_at]])
+
     target["status"] = "answered"
     target["answer"] = answer.strip()
-    target["answered_at"] = _now_str()
+    target["answered_at"] = answered_at
 
     # Promosikan ke FAQ aktif
-    faq_entry = {
-        "id": _next_id(data["active_faqs"]),
-        "keywords": _auto_keywords(target["question"]),
-        "question": target["question"].strip(),
-        "answer": answer.strip(),
-    }
-    data["active_faqs"].append(faq_entry)
-    save_kb(data)
+    faq_entry = add_faq(target["question"], answer, _auto_keywords(target["question"]))
     return {"pending": target, "faq": faq_entry}
 
 
 def delete_pending(pending_id: int) -> bool:
-    data = load_kb()
-    before = len(data["pending_questions"])
-    data["pending_questions"] = [
-        p for p in data["pending_questions"] if int(p.get("id", 0)) != int(pending_id)
-    ]
-    if len(data["pending_questions"]) == before:
-        return False
-    save_kb(data)
-    return True
+    ws, rows = _read_pending_rows()
+    for idx, r in enumerate(rows[1:], start=2):
+        if r and r[0]:
+            try:
+                if int(r[0]) == int(pending_id):
+                    ws.delete_rows(idx)
+                    return True
+            except (ValueError, TypeError):
+                continue
+    return False
