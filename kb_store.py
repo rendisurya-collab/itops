@@ -183,48 +183,80 @@ def delete_faq(faq_id: int) -> bool:
 # PENCARIAN (matching FAQ vs pertanyaan user)
 # ---------------------------------------------------------------------------
 
+_STOPWORDS = {
+    "yang", "untuk", "dengan", "adalah", "dari", "pada", "atau", "dan",
+    "apa", "apakah", "bagaimana", "gimana", "kenapa", "mengapa", "dimana",
+    "kapan", "cara", "tolong", "mohon", "saya", "kami", "ini", "itu", "ada",
+    "ke", "di", "ya", "dong", "sih", "nya", "aku", "kamu", "bisa", "boleh",
+    "mau", "ingin", "biar", "supaya", "agar", "kalau", "jika", "bila",
+    "gmn", "gimna", "solusi", "masalah", "problem",
+}
+
+
+def _meaningful_tokens(text: str) -> set:
+    """Token setelah buang stopword — kata yang benar-benar bermakna."""
+    return {t for t in _tokenize(text) if t not in _STOPWORDS and len(t) > 2}
+
+
 def find_answer(query: str) -> dict:
-    """Cari FAQ terbaik untuk pertanyaan user. Return dict FAQ atau None."""
+    """Cari FAQ terbaik untuk pertanyaan user. Return dict FAQ atau None.
+
+    Pencocokan berbasis KATA BERMAKNA (stopword seperti 'bagaimana cara'
+    diabaikan) supaya pertanyaan generik tidak asal match.
+    """
     query_lower = query.lower().strip()
     if len(query_lower) < 2:
         return None
 
-    query_tokens = _tokenize(query_lower)
+    query_meaning = _meaningful_tokens(query_lower)
+    # Kalau user tidak menuliskan satu pun kata bermakna (cuma stopword),
+    # jangan match apa-apa.
+    if not query_meaning:
+        return None
+
     best = None
     best_score = 0
 
     for faq in list_faqs():
         score = 0
-
         q_faq = faq.get("question", "").lower().strip()
-        if q_faq:
-            if q_faq == query_lower:
-                score += 10
-            elif q_faq in query_lower or query_lower in q_faq:
-                score += 5
+        faq_meaning = _meaningful_tokens(q_faq)
 
+        # 1. Exact match penuh (persis sama) → poin tertinggi
+        if q_faq and q_faq == query_lower:
+            score += 10
+
+        # 2. Overlap kata bermakna antara Question dan pertanyaan user.
+        #    Dihitung sebagai rasio: berapa banyak kata bermakna FAQ yang
+        #    tertutup oleh pertanyaan user. Butuh minimal separuh cocok.
+        if faq_meaning:
+            common = faq_meaning & query_meaning
+            if common:
+                coverage = len(common) / len(faq_meaning)
+                if coverage >= 0.5:
+                    score += 4 + len(common)  # makin banyak kata cocok, makin tinggi
+
+        # 3. Match keyword (kata kunci). Keyword multi-kata dihitung kalau
+        #    SEMUA kata bermakna keyword ada di pertanyaan user.
         for kw in faq.get("keywords", []):
             kw = kw.strip().lower()
             if not kw:
                 continue
+            kw_meaning = _meaningful_tokens(kw)
+            if not kw_meaning:
+                # keyword cuma stopword — abaikan supaya tidak asal match
+                continue
             if kw in query_lower:
+                score += 5
+            elif kw_meaning.issubset(query_meaning):
                 score += 4
-            else:
-                kw_tokens = _tokenize(kw)
-                if kw_tokens and kw_tokens.issubset(query_tokens):
-                    score += 3
-
-        faq_tokens = _tokenize(q_faq)
-        if faq_tokens:
-            overlap = len(faq_tokens & query_tokens)
-            if overlap >= 2:
-                score += overlap
 
         if score > best_score:
             best_score = score
             best = faq
 
-    return best if best_score >= 3 else None
+    # Ambang minimal supaya hanya kecocokan yang cukup kuat yang dijawab
+    return best if best_score >= 4 else None
 
 
 # ---------------------------------------------------------------------------
