@@ -2386,12 +2386,12 @@ async def _answer_kb_or_fallback(update: Update, context: ContextTypes.DEFAULT_T
 
 @restricted
 async def tanya_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler /tanya <pertanyaan> — tanya ke Bank Data secara eksplisit."""
+    """Handler /tanyabot <pertanyaan> — tanya ke Bank Data secara eksplisit."""
     question = update.message.text.partition(" ")[2].strip()
     if not question:
         await update.message.reply_text(
-            "Tulis pertanyaannya setelah /tanya.\n"
-            "Contoh: <code>/tanya server apa yang sedang issue?</code>",
+            "Tulis pertanyaannya setelah /tanyabot.\n"
+            "Contoh: <code>/tanyabot server apa yang sedang issue?</code>",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -2416,7 +2416,7 @@ async def guide_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             and update.message.reply_to_message.from_user.id == context.bot.id
         )
         if not (is_mention or is_reply_to_bot):
-            # Diam saja untuk obrolan biasa; user tetap bisa pakai /tanya
+            # Diam saja untuk obrolan biasa; user tetap bisa pakai /tanyabot
             return
         # Bersihkan mention dari teks pertanyaan
         if is_mention:
@@ -6796,7 +6796,7 @@ def main():
     app.add_handler(CommandHandler("overdue", overdue_command))
 
     # Knowledge Base / Bank Data commands
-    app.add_handler(CommandHandler("tanya", tanya_command))
+    app.add_handler(CommandHandler("tanyabot", tanya_command))
     app.add_handler(CommandHandler("addfaq", addfaq_command))
     app.add_handler(CommandHandler("listfaq", listfaq_command))
     app.add_handler(CommandHandler("delfaq", delfaq_command))
