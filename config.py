@@ -116,6 +116,11 @@ SDP_NOTIFY_INTERVAL_MINUTES = int(os.getenv("SDP_NOTIFY_INTERVAL_MINUTES", "5"))
 # belum pernah diatur lewat command /sdreminder. 0 = nonaktif.
 SDP_OPEN_REMINDER_DEFAULT_MINUTES = int(os.getenv("SDP_OPEN_REMINDER_MINUTES", "0"))
 
+# Monitor SLA/OverDue: kirim notif kalau ada tiket yang sudah lewat DueBy (SLA).
+# SDP_SLA_MONITOR_ENABLED: aktif/tidak. SDP_SLA_CHECK_INTERVAL_MINUTES: interval cek.
+SDP_SLA_MONITOR_ENABLED = os.getenv("SDP_SLA_MONITOR_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+SDP_SLA_CHECK_INTERVAL_MINUTES = int(os.getenv("SDP_SLA_CHECK_INTERVAL_MINUTES", "30"))
+
 
 def sdp_configured() -> bool:
     return bool(SDP_BASE_URL and SDP_API_KEY)

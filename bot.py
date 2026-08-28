@@ -3009,6 +3009,200 @@ async def sdreminder_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
+# ==============================================================================
+# SLA / OVERDUE MONITOR (deteksi tiket yang lewat DueBy)
+# ==============================================================================
+# Status yang dianggap "sudah selesai" — tidak perlu dicek SLA-nya
+_SLA_DONE_STATUSES = {"closed", "resolved", "completed"}
+
+
+def _epoch_from_sdp_time(time_val) -> float:
+    """Ambil epoch (detik) dari field waktu SDP (bisa dict {value: ms} atau angka ms)."""
+    if not time_val:
+        return 0
+    try:
+        if isinstance(time_val, dict):
+            raw = time_val.get("value", 0)
+        else:
+            raw = time_val
+        raw = int(raw)
+        # SDP return epoch dalam milidetik
+        return raw / 1000 if raw > 1e12 else raw
+    except (ValueError, TypeError):
+        return 0
+
+
+def _get_overdue_tickets() -> list:
+    """Ambil semua tiket aktif yang sudah lewat DueBy (SLA) untuk group yang dikonfigurasi.
+
+    Return list of dict: {id, subject, technician, status, due_by_display, delay_str, due_epoch}
+    """
+    if not sdp or not config.SDP_NOTIFY_GROUPS:
+        return []
+
+    active_statuses = [
+        "Open",
+        "In Progress Investigation",
+        "Transfer L1",
+        "Waiting User Confirmation",
+        "Pending",
+        "Onhold",
+    ]
+
+    now_epoch = dt.datetime.now(TZ).timestamp()
+    seen_ids = set()
+    overdue = []
+
+    for status in active_statuses:
+        try:
+            tickets = sdp.list_requests(100, status, config.SDP_NOTIFY_GROUPS)
+        except SDPError as e:
+            logger.error(f"Gagal ambil tiket status {status} untuk cek SLA: {e}")
+            continue
+
+        for t in tickets:
+            tid = t.get("id")
+            if not tid or tid in seen_ids:
+                continue
+
+            due_val = t.get("due_by_time")
+            due_epoch = _epoch_from_sdp_time(due_val)
+            is_overdue_flag = t.get("is_overdue")
+
+            # Tiket overdue kalau flag is_overdue True, ATAU due_by sudah lewat
+            is_over = bool(is_overdue_flag) or (due_epoch > 0 and due_epoch < now_epoch)
+            if not is_over:
+                continue
+
+            seen_ids.add(tid)
+
+            due_display = due_val.get("display_value", "") if isinstance(due_val, dict) else ""
+            # Hitung lama delay
+            delay_str = ""
+            if due_epoch > 0:
+                delta_sec = now_epoch - due_epoch
+                if delta_sec > 0:
+                    days = int(delta_sec // 86400)
+                    hours = int((delta_sec % 86400) // 3600)
+                    mins = int((delta_sec % 3600) // 60)
+                    parts = []
+                    if days:
+                        parts.append(f"{days} hari")
+                    if hours:
+                        parts.append(f"{hours} jam")
+                    if mins and not days:
+                        parts.append(f"{mins} menit")
+                    delay_str = " ".join(parts) if parts else "baru saja"
+
+            overdue.append({
+                "id": tid,
+                "subject": t.get("subject", ""),
+                "technician": (t.get("technician") or {}).get("name", "") if t.get("technician") else "",
+                "status": (t.get("status") or {}).get("name", ""),
+                "due_by_display": due_display,
+                "delay_str": delay_str,
+                "due_epoch": due_epoch,
+            })
+
+    # Urutkan dari yang paling lama overdue (due_epoch terkecil dulu)
+    overdue.sort(key=lambda x: x["due_epoch"] if x["due_epoch"] > 0 else float("inf"))
+    return overdue
+
+
+def _format_overdue_message(overdue: list, max_show: int = 20) -> str:
+    """Susun pesan notifikasi tiket overdue."""
+    lines = [
+        "⚠️ <b>SLA OverDue Alert</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"Ada <b>{len(overdue)}</b> tiket yang sudah lewat batas SLA:",
+        "",
+    ]
+
+    for t in overdue[:max_show]:
+        tech = t["technician"] or "Unassigned"
+        line = (
+            f"🎫 <b>#{t['id']}</b> — {html.escape(t['subject'])}\n"
+            f"   👤 {html.escape(tech)} | 📌 {t['status']}\n"
+            f"   ⏰ DueBy: {t['due_by_display']}"
+        )
+        if t["delay_str"]:
+            line += f" (delay {t['delay_str']})"
+        lines.append(line)
+        lines.append("")
+
+    if len(overdue) > max_show:
+        lines.append(f"...dan {len(overdue) - max_show} tiket overdue lainnya.")
+
+    lines.append(f"🕐 {dt.datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+    return "\n".join(lines).rstrip()
+
+
+async def check_sla_overdue_tickets(context: ContextTypes.DEFAULT_TYPE):
+    """Background job: cek tiket yang lewat SLA dan kirim notif (anti-spam per tiket)."""
+    if not sdp or not config.SDP_NOTIFY_GROUPS:
+        return
+
+    try:
+        overdue = await asyncio.to_thread(_get_overdue_tickets)
+    except Exception as e:
+        logger.error(f"SLA OverDue Monitor error: {e}")
+        return
+
+    if not overdue:
+        return
+
+    # Anti-spam: hanya notif tiket yang BELUM pernah dinotif (atau reset harian)
+    state = _load_sdp_notify_state()
+    today_str = dt.datetime.now(TZ).strftime("%Y-%m-%d")
+    notified = state.get("overdue_notified", {})
+
+    # Reset kalau ganti hari
+    if notified.get("_date") != today_str:
+        notified = {"_date": today_str}
+
+    new_overdue = [t for t in overdue if str(t["id"]) not in notified]
+
+    if not new_overdue:
+        logger.info("SLA OverDue Monitor: tidak ada tiket overdue baru.")
+        return
+
+    await _broadcast_notify(context, _format_overdue_message(new_overdue))
+
+    # Tandai sudah dinotif
+    for t in new_overdue:
+        notified[str(t["id"])] = True
+    state["overdue_notified"] = notified
+    _save_sdp_notify_state(state)
+    logger.info(f"SLA OverDue Monitor: kirim notif {len(new_overdue)} tiket overdue baru.")
+
+
+@restricted
+async def overdue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /overdue — cek manual tiket yang lewat SLA."""
+    await update.message.reply_text("⏳ Mengecek tiket yang lewat SLA...")
+    try:
+        overdue = await asyncio.to_thread(_get_overdue_tickets)
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ Gagal cek tiket overdue:\n<code>{html.escape(str(e))}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if not overdue:
+        await update.message.reply_text(
+            "✅ Tidak ada tiket yang lewat SLA saat ini.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    await update.message.reply_text(
+        _format_overdue_message(overdue),
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def check_open_ticket_reminders(context: ContextTypes.DEFAULT_TYPE):
     if not sdp or not config.SDP_NOTIFY_GROUPS:
         return
@@ -3110,7 +3304,6 @@ def _run_sla_scrape() -> dict:
         "Transfer L1",
         "Waiting User Confirmation",
         "Pending",
-        "OverDue",
         "Onhold",
     ]
 
@@ -3157,8 +3350,14 @@ def _run_sla_scrape() -> dict:
     if solved_this_week == 0 and len(closed_tickets) > 0:
         solved_this_week = len(closed_tickets)
 
-    # Hitung OverDue (sudah ada dari status check)
-    overdue_count = status_counts.get("OverDue", 0)
+    # Hitung OverDue = tiket aktif yang sudah lewat DueBy (is_overdue / due_by_time)
+    now_epoch = now.timestamp()
+    overdue_count = 0
+    for t in all_tickets:
+        due_epoch = _epoch_from_sdp_time(t.get("due_by_time"))
+        if bool(t.get("is_overdue")) or (due_epoch > 0 and due_epoch < now_epoch):
+            overdue_count += 1
+    status_counts["OverDue"] = overdue_count
 
     # Parse assignee dari semua tiket aktif (hanya yang punya technician)
     technicians = []
@@ -6332,6 +6531,7 @@ def main():
     app.add_handler(CommandHandler("updatetimeshift", updatetimeshift_command))
     app.add_handler(CommandHandler("testsheets", testsheets_command))
     app.add_handler(CommandHandler("ticketupdate", ticketupdate_command))
+    app.add_handler(CommandHandler("overdue", overdue_command))
 
     # Command /query (manual trigger)
     app.add_handler(CommandHandler("query", query_command))
@@ -6384,6 +6584,18 @@ def main():
             interval=dt.timedelta(minutes=1),
             first=30,
         )
+
+        # Job Monitor SLA / OverDue
+        if config.SDP_SLA_MONITOR_ENABLED:
+            app.job_queue.run_repeating(
+                check_sla_overdue_tickets,
+                interval=dt.timedelta(minutes=config.SDP_SLA_CHECK_INTERVAL_MINUTES),
+                first=40,
+            )
+            logger.info(
+                f"SLA OverDue Monitor aktif tiap {config.SDP_SLA_CHECK_INTERVAL_MINUTES} menit "
+                f"untuk group: {', '.join(config.SDP_NOTIFY_GROUPS)}"
+            )
 
     if config.REMINDER_INTERVAL_MINUTES > 0:
         app.job_queue.run_repeating(
