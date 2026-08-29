@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import openpyxl
 import pytz
+import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, Conflict, NetworkError, TimedOut
