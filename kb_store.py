@@ -23,9 +23,11 @@ logger = logging.getLogger(__name__)
 
 FAQ_TAB = "FAQ"
 PENDING_TAB = "PendingFAQ"
+QUOTES_TAB = "Quotes"
 
 FAQ_HEADER = ["ID", "Keywords", "Question", "Answer"]
 PENDING_HEADER = ["ID", "User ID", "User Name", "Question", "Status", "Answer", "Created At", "Answered At"]
+QUOTES_HEADER = ["Text", "Author"]
 
 # Cache spreadsheet object supaya tidak auth berulang tiap operasi
 _SPREADSHEET = None
@@ -398,3 +400,46 @@ def delete_pending(pending_id: int) -> bool:
             except (ValueError, TypeError):
                 continue
     return False
+
+
+# ---------------------------------------------------------------------------
+# QUOTES (tab Quotes: Text | Author)
+# ---------------------------------------------------------------------------
+
+def _quotes_ws():
+    return _get_worksheet(QUOTES_TAB, QUOTES_HEADER)
+
+
+def list_quotes() -> list:
+    """Return list of dict {"text", "author"} dari tab Quotes."""
+    ws = _quotes_ws()
+    rows = ws.get_all_values()
+    quotes = []
+    for r in rows[1:]:  # skip header
+        if not r or not r[0].strip():
+            continue
+        quotes.append({
+            "text": r[0].strip(),
+            "author": (r[1].strip() if len(r) > 1 and r[1].strip() else "Anonim"),
+        })
+    return quotes
+
+
+def add_quote(text: str, author: str = "Anonim") -> dict:
+    """Tambah quote baru ke tab Quotes."""
+    ws = _quotes_ws()
+    ws.append_row([text.strip(), (author or "Anonim").strip()], value_input_option="USER_ENTERED")
+    return {"text": text.strip(), "author": (author or "Anonim").strip()}
+
+
+def random_quote() -> dict:
+    """Ambil 1 quote acak dari tab Quotes, atau None kalau kosong/gagal."""
+    import random
+    try:
+        quotes = list_quotes()
+    except Exception as e:
+        logger.error(f"Gagal baca Quotes dari Sheets: {e}")
+        return None
+    if not quotes:
+        return None
+    return random.choice(quotes)

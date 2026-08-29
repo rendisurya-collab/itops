@@ -3639,10 +3639,18 @@ _LOCAL_QUOTES = [
 
 @restricted
 async def quote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler /quote — quote motivasi harian (bahasa Indonesia) dari daftar lokal."""
+    """Handler /quote — quote motivasi harian. Utamakan Google Sheets (tab Quotes),
+    fallback ke daftar lokal kalau Sheets kosong/gagal."""
     import random
 
-    quote = random.choice(_LOCAL_QUOTES)
+    quote = None
+    try:
+        quote = await asyncio.to_thread(kb_store.random_quote)
+    except Exception as e:
+        logger.info(f"Gagal ambil quote dari Sheets, pakai lokal: {e}")
+
+    if not quote:
+        quote = random.choice(_LOCAL_QUOTES)
 
     await update.message.reply_text(
         f"💬 <b>Quote Hari Ini:</b>\n\n"
@@ -3650,6 +3658,81 @@ async def quote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"— <i>{html.escape(quote['author'])}</i>",
         parse_mode=ParseMode.HTML,
     )
+
+
+@restricted
+async def addquote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /addquote <teks> | <author> — tambah quote ke Google Sheets."""
+    raw = update.message.text.partition(" ")[2].strip()
+    if not raw:
+        await update.message.reply_text(
+            "<b>💬 Tambah Quote</b>\n\n"
+            "Format:\n"
+            "<code>/addquote teks quote | nama author</code>\n\n"
+            "Contoh:\n"
+            "<code>/addquote Kerja keras tidak mengkhianati hasil | Anonim</code>\n\n"
+            "Author opsional — kalau tidak diisi otomatis 'Anonim'.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if "|" in raw:
+        text_part, _, author_part = raw.partition("|")
+        text = text_part.strip()
+        author = author_part.strip() or "Anonim"
+    else:
+        text = raw
+        author = "Anonim"
+
+    if not text:
+        await update.message.reply_text("⚠️ Teks quote tidak boleh kosong.", parse_mode=ParseMode.HTML)
+        return
+
+    try:
+        entry = await asyncio.to_thread(kb_store.add_quote, text, author)
+        await update.message.reply_text(
+            f"✅ <b>Quote berhasil ditambahkan!</b>\n\n"
+            f"\"{html.escape(entry['text'])}\"\n"
+            f"— <i>{html.escape(entry['author'])}</i>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ Gagal tambah quote:\n<code>{html.escape(str(e))}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+
+
+@restricted
+async def seedquotes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /seedquotes — isi tab Quotes di Sheets dengan daftar quote lokal
+    (hanya jika tab masih kosong). Berguna sekali di awal migrasi."""
+    await update.message.reply_text("⏳ Menyiapkan quote di Google Sheets...")
+    try:
+        existing = await asyncio.to_thread(kb_store.list_quotes)
+        if existing:
+            await update.message.reply_text(
+                f"ℹ️ Tab Quotes sudah berisi <b>{len(existing)}</b> quote. Seeding dilewati.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        def _seed():
+            for q in _LOCAL_QUOTES:
+                kb_store.add_quote(q["text"], q["author"])
+            return len(_LOCAL_QUOTES)
+
+        count = await asyncio.to_thread(_seed)
+        await update.message.reply_text(
+            f"✅ Berhasil menambahkan <b>{count}</b> quote ke tab Quotes di Google Sheets.\n"
+            "Sekarang kamu bisa kelola quote langsung dari spreadsheet.",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ Gagal seeding quotes:\n<code>{html.escape(str(e))}</code>",
+            parse_mode=ParseMode.HTML,
+        )
 
 
 # ==============================================================================
@@ -7074,6 +7157,8 @@ def main():
     app.add_handler(CommandHandler("ticketupdate", ticketupdate_command))
     app.add_handler(CommandHandler("overdue", overdue_command))
     app.add_handler(CommandHandler("quote", quote_command))
+    app.add_handler(CommandHandler("addquote", addquote_command))
+    app.add_handler(CommandHandler("seedquotes", seedquotes_command))
     app.add_handler(CommandHandler("coffee", coffee_command))
     app.add_handler(CommandHandler("testsearch", testsearch_command))
 
