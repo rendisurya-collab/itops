@@ -2360,6 +2360,84 @@ async def list_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(_safe_telegram_text("\n".join(lines).rstrip()))
 
 
+# ==============================================================================
+# WEB SEARCH (Serper.dev) — general query handler untuk /tanyabot
+# ==============================================================================
+# Kata pemicu yang menandakan pertanyaan umum/rekomendasi (general intent).
+_GENERAL_INTENT_RE = re.compile(
+    r"\b(rekomendasi|saran|tempat|wisata|kuliner|makan|jalan[- ]?jalan|liburan|"
+    r"long ?weekend|berita|kabar|terbaru|info|cari|carikan|apa itu|siapa|kenapa|"
+    r"bagaimana|gimana|tips|cara|resep|review|harga|jadwal|film|lagu|hotel|"
+    r"restoran|cafe|kafe|destinasi|libur|weekend|trending|populer|news)\b",
+    re.IGNORECASE,
+)
+
+
+def _web_search(query: str, num: int = 5) -> list:
+    """Cari via Serper.dev (Google Search API). Return list of dict:
+    [{"title", "snippet", "link"}]. Raise Exception kalau gagal / key kosong."""
+    api_key = config.SERPER_API_KEY
+    if not api_key:
+        raise RuntimeError("SERPER_API_KEY belum diset.")
+
+    resp = requests.post(
+        "https://google.serper.dev/search",
+        headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+        json={"q": query, "gl": config.SERPER_GL, "hl": config.SERPER_HL, "num": num},
+        timeout=12,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    results = []
+
+    # Answer box (jawaban langsung dari Google) — kalau ada
+    ab = data.get("answerBox")
+    if ab:
+        ans = ab.get("answer") or ab.get("snippet") or ""
+        if ans:
+            results.append({
+                "title": ab.get("title", "Jawaban"),
+                "snippet": ans,
+                "link": ab.get("link", ""),
+            })
+
+    for item in data.get("organic", [])[:num]:
+        results.append({
+            "title": item.get("title", "").strip(),
+            "snippet": item.get("snippet", "").strip(),
+            "link": item.get("link", "").strip(),
+        })
+
+    return results[:num]
+
+
+def _format_web_results(query: str, results: list) -> str:
+    """Format hasil pencarian jadi list ringkas untuk Telegram."""
+    lines = [
+        f"🔎 <b>Hasil pencarian untuk:</b> {html.escape(query)}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+    ]
+    for i, r in enumerate(results, 1):
+        title = r.get("title") or "(tanpa judul)"
+        snippet = r.get("snippet") or ""
+        link = r.get("link") or ""
+        block = f"<b>{i}. {html.escape(title)}</b>"
+        if snippet:
+            # Batasi panjang snippet biar ringkas
+            if len(snippet) > 200:
+                snippet = snippet[:200].rstrip() + "..."
+            block += f"\n{html.escape(snippet)}"
+        if link:
+            block += f"\n🔗 <a href=\"{html.escape(link)}\">{html.escape(link)}</a>"
+        lines.append(block)
+        lines.append("")
+
+    lines.append("<i>Sumber: Google Search via Serper.dev</i>")
+    return "\n".join(lines).rstrip()
+
+
 async def _answer_kb_or_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     """Cek KB → jawab. Kalau tidak ketemu, cek guidance. Kalau tetap tidak,
     fallback + simpan pertanyaan ke pending."""
@@ -2398,7 +2476,24 @@ async def _answer_kb_or_fallback(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.info(f"Gagal ambil tiket #{request_id} dari /tanyabot: {e}")
 
-    # 5. Tidak ketemu: fallback + simpan pertanyaan ke pending (auto)
+    # 5. General query / rekomendasi umum -> Web Search (Serper.dev)
+    #    Dipicu kalau ada kata general intent ATAU pertanyaan cukup panjang.
+    is_general = bool(_GENERAL_INTENT_RE.search(text)) or len(text.split()) >= 4
+    if config.SERPER_API_KEY and is_general:
+        try:
+            await update.message.reply_text("🔎 Mencari informasi di web...")
+            results = await asyncio.to_thread(_web_search, text, 5)
+            if results:
+                await update.message.reply_text(
+                    _format_web_results(text, results),
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+                return
+        except Exception as e:
+            logger.info(f"Web search gagal untuk '{text}': {e}")
+
+    # 6. Tidak ketemu: fallback + simpan pertanyaan ke pending (auto)
     user = update.effective_user
     user_name = user.full_name if user else ""
     user_id = user.id if user else ""

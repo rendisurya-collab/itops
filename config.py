@@ -164,3 +164,11 @@ SLA_MONITOR_STATE_FILE = os.getenv("SLA_MONITOR_STATE_FILE", "state.json")
 # ==== Google Sheets Logging ====
 GOOGLE_SHEETS_CREDENTIALS = os.getenv("GOOGLE_SHEETS_CREDENTIALS", "")
 GOOGLE_SHEETS_SPREADSHEET_ID = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID", "18Vku1ikHbF8sa4ioRMm-yfkSejAUH4nsr7vE5JcjGI8")
+
+# ==== Web Search (Serper.dev) ====
+# API key dari https://serper.dev (gratis 2500 query). Kalau kosong, fitur web
+# search di /tanyabot dinonaktifkan (bot langsung fallback simpan pending).
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
+# Region & bahasa hasil pencarian (default Indonesia)
+SERPER_GL = os.getenv("SERPER_GL", "id")
+SERPER_HL = os.getenv("SERPER_HL", "id")
