@@ -2480,7 +2480,7 @@ async def _answer_kb_or_fallback(update: Update, context: ContextTypes.DEFAULT_T
     # 5. General query / rekomendasi umum -> Web Search (Serper.dev)
     #    Dipicu kalau ada kata general intent ATAU pertanyaan cukup panjang.
     is_general = bool(_GENERAL_INTENT_RE.search(text)) or len(text.split()) >= 4
-    if config.SERPER_API_KEY and is_general:
+    if config.WEB_SEARCH_ENABLED and config.SERPER_API_KEY and is_general:
         try:
             await update.message.reply_text("🔎 Mencari informasi di web...")
             results = await asyncio.to_thread(_web_search, text, 5)
@@ -3713,6 +3713,12 @@ async def coffee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @restricted
 async def testsearch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler /testsearch — diagnostik koneksi Web Search (Serper.dev)."""
+    if not config.WEB_SEARCH_ENABLED:
+        await update.message.reply_text(
+            "ℹ️ Web Search sedang <b>dinonaktifkan</b> (WEB_SEARCH_ENABLED=false).",
+            parse_mode=ParseMode.HTML,
+        )
+        return
     if not config.SERPER_API_KEY:
         await update.message.reply_text(
             "⚠️ <code>SERPER_API_KEY</code> belum diset di environment (Railway).",

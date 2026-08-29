@@ -166,6 +166,9 @@ GOOGLE_SHEETS_CREDENTIALS = os.getenv("GOOGLE_SHEETS_CREDENTIALS", "")
 GOOGLE_SHEETS_SPREADSHEET_ID = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID", "18Vku1ikHbF8sa4ioRMm-yfkSejAUH4nsr7vE5JcjGI8")
 
 # ==== Web Search (Serper.dev) ====
+# Toggle on/off General Query Handler (web search) di /tanyabot.
+# Set "false" untuk menonaktifkan tanpa perlu menghapus API key.
+WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "true").strip().lower() in ("1", "true", "yes")
 # API key dari https://serper.dev (gratis 2500 query). Kalau kosong, fitur web
 # search di /tanyabot dinonaktifkan (bot langsung fallback simpan pending).
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
