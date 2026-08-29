@@ -3709,6 +3709,38 @@ async def coffee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@restricted
+async def testsearch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /testsearch — diagnostik koneksi Web Search (Serper.dev)."""
+    if not config.SERPER_API_KEY:
+        await update.message.reply_text(
+            "⚠️ <code>SERPER_API_KEY</code> belum diset di environment (Railway).",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    query = update.message.text.partition(" ")[2].strip() or "berita teknologi terbaru"
+    await update.message.reply_text(f"🔎 Test search: <code>{html.escape(query)}</code>", parse_mode=ParseMode.HTML)
+    try:
+        results = await asyncio.to_thread(_web_search, query, 3)
+        if not results:
+            await update.message.reply_text("ℹ️ Koneksi OK tapi hasil kosong.")
+            return
+        await update.message.reply_text(
+            _format_web_results(query, results),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        await update.message.reply_text(
+            f"⚠️ <b>Web Search gagal:</b>\n<pre>{html.escape(f'{type(e).__name__}: {e}')[:600]}</pre>\n"
+            f"<pre>{html.escape(tb[-800:])}</pre>",
+            parse_mode=ParseMode.HTML,
+        )
+
+
 async def check_open_ticket_reminders(context: ContextTypes.DEFAULT_TYPE):
     if not sdp or not config.SDP_NOTIFY_GROUPS:
         return
@@ -7040,6 +7072,7 @@ def main():
     app.add_handler(CommandHandler("overdue", overdue_command))
     app.add_handler(CommandHandler("quote", quote_command))
     app.add_handler(CommandHandler("coffee", coffee_command))
+    app.add_handler(CommandHandler("testsearch", testsearch_command))
 
     # Knowledge Base / Bank Data commands
     app.add_handler(CommandHandler("tanyabot", tanya_command))
