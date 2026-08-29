@@ -3591,7 +3591,7 @@ async def overdue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ==============================================================================
-# QUOTE OF THE DAY (/quote) — API publik + fallback lokal
+# QUOTE OF THE DAY (/quote) — daftar lokal bahasa Indonesia
 # ==============================================================================
 _LOCAL_QUOTES = [
     {"text": "Kesuksesan adalah kemampuan untuk melangkah dari satu kegagalan ke kegagalan lain tanpa kehilangan semangat.", "author": "Winston Churchill"},
@@ -3602,51 +3602,47 @@ _LOCAL_QUOTES = [
     {"text": "Kualitas bukanlah suatu tindakan, melainkan sebuah kebiasaan.", "author": "Aristoteles"},
     {"text": "Mulailah dari mana kamu berada. Gunakan apa yang kamu punya. Lakukan apa yang kamu bisa.", "author": "Arthur Ashe"},
     {"text": "Kerja keras mengalahkan bakat ketika bakat tidak bekerja keras.", "author": "Tim Notke"},
+    {"text": "Jangan takut gagal. Takutlah untuk tidak mencoba.", "author": "Anonim"},
+    {"text": "Hidup itu seperti mengendarai sepeda. Untuk menjaga keseimbangan, kamu harus terus bergerak.", "author": "Albert Einstein"},
+    {"text": "Orang yang tidak pernah melakukan kesalahan adalah orang yang tidak pernah mencoba hal baru.", "author": "Albert Einstein"},
+    {"text": "Semua impian kita bisa menjadi kenyataan jika kita punya keberanian untuk mengejarnya.", "author": "Walt Disney"},
+    {"text": "Kebahagiaan bukanlah sesuatu yang sudah jadi. Ia datang dari tindakanmu sendiri.", "author": "Dalai Lama"},
+    {"text": "Jangan menunggu waktu yang tepat, karena waktu tidak akan pernah benar-benar tepat.", "author": "Napoleon Hill"},
+    {"text": "Yang membedakan orang sukses dan tidak sukses bukan kekuatan atau pengetahuan, tapi kemauan.", "author": "Vince Lombardi"},
+    {"text": "Kegagalan hanyalah kesempatan untuk memulai lagi dengan lebih cerdas.", "author": "Henry Ford"},
+    {"text": "Percaya pada dirimu sendiri dan semua yang kamu miliki. Kamu lebih kuat dari yang kamu kira.", "author": "Anonim"},
+    {"text": "Sukses adalah hasil dari persiapan, kerja keras, dan belajar dari kegagalan.", "author": "Colin Powell"},
+    {"text": "Jangan pernah menyerah pada mimpi hanya karena butuh waktu untuk mewujudkannya.", "author": "Anonim"},
+    {"text": "Perubahan besar dimulai dari langkah kecil yang konsisten.", "author": "Anonim"},
+    {"text": "Lakukan hari ini apa yang orang lain tidak mau, agar besok kamu bisa melakukan apa yang orang lain tidak bisa.", "author": "Jerry Rice"},
+    {"text": "Kesabaran adalah kunci. Segala sesuatu yang baik butuh waktu untuk tumbuh.", "author": "Anonim"},
+    {"text": "Fokus pada kemajuan, bukan kesempurnaan.", "author": "Anonim"},
+    {"text": "Semakin keras kamu bekerja untuk sesuatu, semakin besar rasa bangga saat mencapainya.", "author": "Anonim"},
+    {"text": "Jangan biarkan kemarin menghabiskan terlalu banyak waktu hari ini.", "author": "Will Rogers"},
+    {"text": "Sikapmu, bukan bakatmu, yang menentukan seberapa tinggi kamu bisa mencapai.", "author": "Zig Ziglar"},
+    {"text": "Setiap ahli pernah menjadi pemula. Teruslah belajar.", "author": "Anonim"},
+    {"text": "Motivasi membuatmu memulai. Kebiasaan membuatmu terus melangkah.", "author": "Jim Ryun"},
+    {"text": "Hidup dimulai di akhir zona nyamanmu.", "author": "Neale Donald Walsch"},
+    {"text": "Jika kamu ingin mencapai hal-hal hebat, berhentilah meminta izin.", "author": "Anonim"},
+    {"text": "Rezeki tidak akan tertukar. Yang penting terus berusaha dan berdoa.", "author": "Anonim"},
+    {"text": "Bekerja dalam diam, biarkan kesuksesanmu yang bersuara.", "author": "Frank Ocean"},
+    {"text": "Tidak ada yang mustahil bagi orang yang mau berusaha.", "author": "Alexander Agung"},
+    {"text": "Kesulitan hari ini adalah kekuatan untuk masa depan.", "author": "Anonim"},
+    {"text": "Bermimpilah besar dan beranilah gagal.", "author": "Norman Vaughan"},
+    {"text": "Jadilah versi terbaik dari dirimu, bukan tiruan dari orang lain.", "author": "Anonim"},
+    {"text": "Disiplin adalah jembatan antara tujuan dan pencapaian.", "author": "Jim Rohn"},
+    {"text": "Waktu yang paling tepat untuk memulai adalah sekarang.", "author": "Anonim"},
+    {"text": "Kekuatan tidak datang dari kemenangan. Perjuanganmulah yang menumbuhkan kekuatan.", "author": "Arnold Schwarzenegger"},
+    {"text": "Jangan berhenti ketika lelah. Berhentilah ketika selesai.", "author": "Anonim"},
 ]
-
-
-def _fetch_remote_quote() -> dict:
-    """Ambil 1 quote dari API publik. Utamakan Quotable (ambil field content &
-    author), fallback ke ZenQuotes bila Quotable gagal.
-
-    Return dict {"text": ..., "author": ...} atau raise Exception kalau semua gagal.
-    """
-    # 1. Quotable (random) — HTTP GET https://api.quotable.io/random
-    try:
-        resp = requests.get("https://api.quotable.io/random", timeout=8)
-        resp.raise_for_status()
-        data = resp.json()
-        content = (data.get("content") or "").strip()
-        if content:
-            return {"text": content, "author": (data.get("author") or "Anonim").strip()}
-    except Exception as e:
-        logger.info(f"Quotable gagal, coba ZenQuotes: {e}")
-
-    # 2. ZenQuotes (random) — fallback
-    resp = requests.get("https://zenquotes.io/api/random", timeout=8)
-    resp.raise_for_status()
-    data = resp.json()
-    if isinstance(data, list) and data and data[0].get("q"):
-        return {"text": data[0]["q"].strip(), "author": (data[0].get("a") or "Anonim").strip()}
-    raise RuntimeError("Respon API quote tidak valid")
 
 
 @restricted
 async def quote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler /quote — ambil quote harian dari API publik, fallback lokal."""
+    """Handler /quote — quote motivasi harian (bahasa Indonesia) dari daftar lokal."""
     import random
 
-    quote = None
-    try:
-        quote = await asyncio.to_thread(_fetch_remote_quote)
-        if not quote or not quote.get("text"):
-            quote = None
-    except Exception as e:
-        logger.info(f"Gagal ambil quote dari API publik, pakai fallback lokal: {e}")
-
-    # Fallback ke daftar lokal
-    if not quote:
-        quote = random.choice(_LOCAL_QUOTES)
+    quote = random.choice(_LOCAL_QUOTES)
 
     await update.message.reply_text(
         f"💬 <b>Quote Hari Ini:</b>\n\n"
