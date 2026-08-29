@@ -3465,6 +3465,68 @@ async def overdue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ==============================================================================
+# QUOTE OF THE DAY (/quote) — API publik + fallback lokal
+# ==============================================================================
+_LOCAL_QUOTES = [
+    {"text": "Kesuksesan adalah kemampuan untuk melangkah dari satu kegagalan ke kegagalan lain tanpa kehilangan semangat.", "author": "Winston Churchill"},
+    {"text": "Satu-satunya cara melakukan pekerjaan hebat adalah dengan mencintai apa yang kamu kerjakan.", "author": "Steve Jobs"},
+    {"text": "Jangan menilai setiap hari dari panen yang kamu tuai, tapi dari benih yang kamu tanam.", "author": "Robert Louis Stevenson"},
+    {"text": "Masa depan milik mereka yang percaya pada keindahan mimpi mereka.", "author": "Eleanor Roosevelt"},
+    {"text": "Cara terbaik memprediksi masa depan adalah dengan menciptakannya.", "author": "Peter Drucker"},
+    {"text": "Kualitas bukanlah suatu tindakan, melainkan sebuah kebiasaan.", "author": "Aristoteles"},
+    {"text": "Mulailah dari mana kamu berada. Gunakan apa yang kamu punya. Lakukan apa yang kamu bisa.", "author": "Arthur Ashe"},
+    {"text": "Kerja keras mengalahkan bakat ketika bakat tidak bekerja keras.", "author": "Tim Notke"},
+]
+
+
+def _fetch_remote_quote() -> dict:
+    """Ambil 1 quote dari API publik (ZenQuotes, fallback Quotable).
+
+    Return dict {"text": ..., "author": ...} atau raise Exception kalau gagal.
+    """
+    # 1. ZenQuotes (random)
+    try:
+        resp = requests.get("https://zenquotes.io/api/random", timeout=8)
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, list) and data and data[0].get("q"):
+            return {"text": data[0]["q"].strip(), "author": (data[0].get("a") or "Anonim").strip()}
+    except Exception as e:
+        logger.info(f"ZenQuotes gagal, coba Quotable: {e}")
+
+    # 2. Quotable (random)
+    resp = requests.get("https://api.quotable.io/random", timeout=8)
+    resp.raise_for_status()
+    data = resp.json()
+    return {"text": data.get("content", "").strip(), "author": (data.get("author") or "Anonim").strip()}
+
+
+@restricted
+async def quote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /quote — ambil quote harian dari API publik, fallback lokal."""
+    import random
+
+    quote = None
+    try:
+        quote = await asyncio.to_thread(_fetch_remote_quote)
+        if not quote or not quote.get("text"):
+            quote = None
+    except Exception as e:
+        logger.info(f"Gagal ambil quote dari API publik, pakai fallback lokal: {e}")
+
+    # Fallback ke daftar lokal
+    if not quote:
+        quote = random.choice(_LOCAL_QUOTES)
+
+    await update.message.reply_text(
+        f"💬 <b>Quote Hari Ini:</b>\n\n"
+        f"\"{html.escape(quote['text'])}\"\n"
+        f"— <i>{html.escape(quote['author'])}</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def check_open_ticket_reminders(context: ContextTypes.DEFAULT_TYPE):
     if not sdp or not config.SDP_NOTIFY_GROUPS:
         return
@@ -6794,6 +6856,7 @@ def main():
     app.add_handler(CommandHandler("testsheets", testsheets_command))
     app.add_handler(CommandHandler("ticketupdate", ticketupdate_command))
     app.add_handler(CommandHandler("overdue", overdue_command))
+    app.add_handler(CommandHandler("quote", quote_command))
 
     # Knowledge Base / Bank Data commands
     app.add_handler(CommandHandler("tanyabot", tanya_command))
