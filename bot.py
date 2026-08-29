@@ -1562,8 +1562,16 @@ async def natural_tools_handler(update: Update, context: ContextTypes.DEFAULT_TY
     """Handler text bebas yang mendeteksi format input tools dan langsung eksekusi."""
     if not _is_allowed_chat(update.effective_chat.id):
         return
+    await _try_execute_tools(update, context, update.message.text.strip())
 
-    text = update.message.text.strip()
+
+async def _try_execute_tools(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> bool:
+    """Deteksi format input tools dari `text` dan langsung eksekusi.
+
+    Return True kalau ada tool yang terdeteksi & dijalankan, False kalau tidak
+    cocok dengan format tool manapun.
+    """
+    text = (text or "").strip()
 
     # Coba detect Delete Reservation (bucode + ordernumber + sku + qty)
     # Harus dicek SEBELUM promo karena keduanya punya sku + bucode
@@ -1595,35 +1603,37 @@ async def natural_tools_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 ]
             ]),
         )
-        return
+        return True
 
     # Coba detect AWB JNE (ordernumber + awb)
     awbjne_data = _parse_awbjne_text(text)
     if awbjne_data:
         context.user_data["awbjne_items"] = awbjne_data
         await _awbjne_execute_multi(update, context)
-        return
+        return True
 
     # Coba detect AWB OMS (ordernumber + source)
     cekawb_data = _parse_cekawb_text(text)
     if cekawb_data:
         context.user_data["cekawb_data"] = cekawb_data
         await _cekawb_execute(update, context)
-        return
+        return True
 
     # Coba detect Promo (sku + bucode, TANPA ordernumber)
     promo_data = _parse_cekpromo_text(text)
     if promo_data and not re.search(r"(?:ordernumber|order|no)\s*[:=]", text, re.IGNORECASE):
         context.user_data["cekpromo_data"] = promo_data
         await _cekpromo_execute(update, context)
-        return
+        return True
 
     # Coba detect Stock (sku/article + source)
     stock_data = _parse_checkstock_text(text)
     if stock_data:
         context.user_data["checkstock_data"] = stock_data
         await _checkstock_show_confirm(update, context)
-        return
+        return True
+
+    return False
 
 
 async def _format_ticket_detail(request_id: str, req: dict) -> str:
@@ -2369,7 +2379,26 @@ async def _answer_kb_or_fallback(update: Update, context: ContextTypes.DEFAULT_T
         await send_guidance_matches(update, context, text, matches)
         return
 
-    # 3. Tidak ketemu: fallback + simpan pertanyaan ke pending (auto)
+    # 3. Cek format tools (cek stock/promo/awb/delreservation/dll) -> eksekusi
+    try:
+        if await _try_execute_tools(update, context, text):
+            return
+    except Exception as e:
+        logger.error(f"Gagal eksekusi tools dari /tanyabot: {e}")
+
+    # 4. Cek natural "cek tiket #12345"
+    tiket_match = CEK_TIKET_RE.search(text)
+    if tiket_match and sdp:
+        request_id = tiket_match.group(1)
+        try:
+            req = await asyncio.to_thread(sdp.get_request, request_id)
+            detail = await _format_ticket_detail(request_id, req)
+            await update.message.reply_text(detail, parse_mode=ParseMode.HTML)
+            return
+        except Exception as e:
+            logger.info(f"Gagal ambil tiket #{request_id} dari /tanyabot: {e}")
+
+    # 5. Tidak ketemu: fallback + simpan pertanyaan ke pending (auto)
     user = update.effective_user
     user_name = user.full_name if user else ""
     user_id = user.id if user else ""
@@ -2379,7 +2408,7 @@ async def _answer_kb_or_fallback(update: Update, context: ContextTypes.DEFAULT_T
         logger.error(f"Gagal simpan pertanyaan pending KB: {e}")
 
     await update.message.reply_text(
-        "🙏 Maaf, saya belum punya jawaban untuk pertanyaan ini.\n"
+        "Maaf, saya belum punya jawaban untuk pertanyaan ini.\n"
         "Pertanyaan kamu sudah dicatat dan akan dijawab oleh admin. Terima kasih!"
     )
 
