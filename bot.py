@@ -3510,25 +3510,29 @@ _LOCAL_QUOTES = [
 
 
 def _fetch_remote_quote() -> dict:
-    """Ambil 1 quote dari API publik (ZenQuotes, fallback Quotable).
+    """Ambil 1 quote dari API publik. Utamakan Quotable (ambil field content &
+    author), fallback ke ZenQuotes bila Quotable gagal.
 
-    Return dict {"text": ..., "author": ...} atau raise Exception kalau gagal.
+    Return dict {"text": ..., "author": ...} atau raise Exception kalau semua gagal.
     """
-    # 1. ZenQuotes (random)
+    # 1. Quotable (random) — HTTP GET https://api.quotable.io/random
     try:
-        resp = requests.get("https://zenquotes.io/api/random", timeout=8)
+        resp = requests.get("https://api.quotable.io/random", timeout=8)
         resp.raise_for_status()
         data = resp.json()
-        if isinstance(data, list) and data and data[0].get("q"):
-            return {"text": data[0]["q"].strip(), "author": (data[0].get("a") or "Anonim").strip()}
+        content = (data.get("content") or "").strip()
+        if content:
+            return {"text": content, "author": (data.get("author") or "Anonim").strip()}
     except Exception as e:
-        logger.info(f"ZenQuotes gagal, coba Quotable: {e}")
+        logger.info(f"Quotable gagal, coba ZenQuotes: {e}")
 
-    # 2. Quotable (random)
-    resp = requests.get("https://api.quotable.io/random", timeout=8)
+    # 2. ZenQuotes (random) — fallback
+    resp = requests.get("https://zenquotes.io/api/random", timeout=8)
     resp.raise_for_status()
     data = resp.json()
-    return {"text": data.get("content", "").strip(), "author": (data.get("author") or "Anonim").strip()}
+    if isinstance(data, list) and data and data[0].get("q"):
+        return {"text": data[0]["q"].strip(), "author": (data[0].get("a") or "Anonim").strip()}
+    raise RuntimeError("Respon API quote tidak valid")
 
 
 @restricted
@@ -3552,6 +3556,60 @@ async def quote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💬 <b>Quote Hari Ini:</b>\n\n"
         f"\"{html.escape(quote['text'])}\"\n"
         f"— <i>{html.escape(quote['author'])}</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+# ==============================================================================
+# COFFEE RECOMMENDATION (/coffee) — "endpoint internal" /api/coffee (mock lokal)
+# ==============================================================================
+# Database/config lokal rekomendasi kopi + kata penenang.
+_COFFEE_MENU = [
+    {"name": "Espresso", "desc": "Shot kopi pekat untuk dorongan energi cepat."},
+    {"name": "Cappuccino", "desc": "Espresso dengan susu berbusa lembut, klasik dan seimbang."},
+    {"name": "Caffè Latte", "desc": "Espresso dengan banyak susu hangat, halus dan creamy."},
+    {"name": "Americano", "desc": "Espresso yang diencerkan dengan air panas, ringan dan bersih."},
+    {"name": "Kopi Tubruk", "desc": "Kopi tradisional Indonesia, diseduh langsung dengan gula."},
+    {"name": "Cold Brew", "desc": "Kopi seduh dingin 12 jam, rendah asam dan menyegarkan."},
+    {"name": "Flat White", "desc": "Espresso ganda dengan microfoam tipis, kuat tapi lembut."},
+    {"name": "Mocha", "desc": "Perpaduan espresso, cokelat, dan susu untuk yang suka manis."},
+]
+
+_CALMING_WORDS = [
+    "Tarik napas dalam-dalam, semua akan baik-baik saja.",
+    "Satu langkah kecil hari ini lebih baik daripada tidak sama sekali.",
+    "Istirahat sejenak bukan berarti menyerah, tapi mengisi ulang tenaga.",
+    "Kamu sudah melakukan yang terbaik, hargai dirimu.",
+    "Pelan-pelan saja, tidak semua harus selesai hari ini.",
+    "Nikmati kopimu, biarkan pikiran tenang sejenak.",
+    "Tenang, badai pasti berlalu. Seduh kopi dulu.",
+    "Fokus pada hal yang bisa kamu kendalikan, lepaskan sisanya.",
+]
+
+
+def _get_coffee_recommendation() -> dict:
+    """Endpoint internal /api/coffee (mock): kembalikan 1 rekomendasi kopi +
+    kata penenang acak dari config lokal.
+
+    Return: {"coffee": {"name","desc"}, "calming_word": "..."}
+    """
+    import random
+    return {
+        "coffee": random.choice(_COFFEE_MENU),
+        "calming_word": random.choice(_CALMING_WORDS),
+    }
+
+
+@restricted
+async def coffee_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /coffee — rekomendasi kopi + kata penenang acak."""
+    data = _get_coffee_recommendation()
+    coffee = data["coffee"]
+    await update.message.reply_text(
+        f"☕ <b>Rekomendasi Kopi Hari Ini:</b>\n\n"
+        f"<b>{html.escape(coffee['name'])}</b>\n"
+        f"{html.escape(coffee['desc'])}\n\n"
+        f"🧘 <i>{html.escape(data['calming_word'])}</i>",
         parse_mode=ParseMode.HTML,
     )
 
@@ -6886,6 +6944,7 @@ def main():
     app.add_handler(CommandHandler("ticketupdate", ticketupdate_command))
     app.add_handler(CommandHandler("overdue", overdue_command))
     app.add_handler(CommandHandler("quote", quote_command))
+    app.add_handler(CommandHandler("coffee", coffee_command))
 
     # Knowledge Base / Bank Data commands
     app.add_handler(CommandHandler("tanyabot", tanya_command))
