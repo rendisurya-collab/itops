@@ -3926,9 +3926,18 @@ def _fetch_eraspace_order(pomp: str) -> dict:
     Raise ValueError kalau order tidak ditemukan, RuntimeError untuk kendala API.
     """
     params = {"user": config.ERASPACE_USER, "pomp": pomp}
-    headers = {"Accept": "application/json"}
-    if config.ERASPACE_COOKIE:
-        headers["Cookie"] = config.ERASPACE_COOKIE
+    # Header mirip browser + Cloudflare cookie supaya tidak diblokir
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    }
+    cookie_raw = (config.ERASPACE_COOKIE or "").strip()
+    if cookie_raw:
+        # Ambil hanya pasangan nama=nilai, buang atribut (Path/Domain/Secure/Expires/dll).
+        # Kalau user menempel seluruh baris Set-Cookie, kita rapikan otomatis.
+        first = cookie_raw.split(";")[0].strip()
+        headers["Cookie"] = first
 
     try:
         resp = requests.post(config.ERASPACE_DUMPDO_URL, params=params, headers=headers, timeout=20)
@@ -3936,7 +3945,7 @@ def _fetch_eraspace_order(pomp: str) -> dict:
         raise RuntimeError(f"Gagal terhubung: {e}")
 
     if not resp.ok:
-        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")
 
     try:
         data = resp.json()
@@ -3994,6 +4003,43 @@ def _format_eraspace_order(order: dict) -> str:
         lines.append(f"📍 <b>Lokasi:</b> -")
 
     return "\n".join(lines)
+
+
+@restricted
+async def cekorder_debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /cekorderdebug [pomp] — tampilkan status code & raw response mentah."""
+    pomp = update.message.text.partition(" ")[2].strip() or "4601361781"
+
+    def _raw():
+        params = {"user": config.ERASPACE_USER, "pomp": pomp}
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        }
+        cookie_raw = (config.ERASPACE_COOKIE or "").strip()
+        if cookie_raw:
+            headers["Cookie"] = cookie_raw.split(";")[0].strip()
+        r = requests.post(config.ERASPACE_DUMPDO_URL, params=params, headers=headers, timeout=20)
+        return r.status_code, r.text[:1200], dict(r.headers)
+
+    await update.message.reply_text(f"⏳ Debug cek order <code>{html.escape(pomp)}</code>...", parse_mode=ParseMode.HTML)
+    try:
+        status_code, body, resp_headers = await asyncio.to_thread(_raw)
+        ct = resp_headers.get("Content-Type", "")
+        await update.message.reply_text(
+            f"<b>Status:</b> {status_code}\n"
+            f"<b>Content-Type:</b> {html.escape(ct)}\n\n"
+            f"<b>Body (potongan):</b>\n<pre>{html.escape(body)}</pre>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        import traceback
+        await update.message.reply_text(
+            f"⚠️ Exception:\n<pre>{html.escape(f'{type(e).__name__}: {e}')}</pre>\n"
+            f"<pre>{html.escape(traceback.format_exc()[-800:])}</pre>",
+            parse_mode=ParseMode.HTML,
+        )
 
 
 @restricted
@@ -7377,6 +7423,7 @@ def main():
 
     # Eraspace order tracking (dumpdo)
     app.add_handler(CommandHandler("cekorder", cekorder_command))
+    app.add_handler(CommandHandler("cekorderdebug", cekorder_debug_command))
 
     # Knowledge Base / Bank Data commands
     app.add_handler(CommandHandler("tanyabot", tanya_command))
