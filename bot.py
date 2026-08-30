@@ -32,6 +32,7 @@ import guidance_store
 import kb_store
 import user_accounts
 from export_excel import build_export_excel
+from grab_client import GrabClient, GrabError, GrabNotFound
 from jira_client import JiraClient, JiraError
 from servicedesk_client import SDPClient, SDPError
 
@@ -45,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 jira = JiraClient()  # dipakai untuk fitur yang tidak butuh atribusi personal (/tasks, /export)
 sdp = SDPClient() if config.sdp_configured() else None
+grab = GrabClient() if config.grab_configured() else None
 
 _JIRA_CLIENT_CACHE = {}  # telegram_user_id (str) -> JiraClient
 
@@ -2505,7 +2507,7 @@ async def _answer_kb_or_fallback(update: Update, context: ContextTypes.DEFAULT_T
 
     await update.message.reply_text(
         "Maaf, saya belum punya jawaban untuk pertanyaan ini.\n"
-        "Pertanyaan kamu sudah dicatat dan akan dijawab oleh admin. Terima kasih!"
+        "Pertanyaan kamu saya pelajari lebih lanjut. Terima kasih!"
     )
 
 
@@ -3825,6 +3827,93 @@ async def testsearch_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"<pre>{html.escape(tb[-800:])}</pre>",
             parse_mode=ParseMode.HTML,
         )
+
+
+# ==============================================================================
+# GRABEXPRESS TRACKING (/lacakgrab, /trackgrab)
+# ==============================================================================
+
+def _format_grab_delivery(delivery_id: str, data: dict) -> str:
+    """Susun pesan status pengiriman GrabExpress dari response API."""
+    status = data.get("status", "-")
+
+    courier = data.get("courier") or data.get("driver") or {}
+    driver_name = courier.get("name", "") or "-"
+    license_plate = courier.get("licensePlate") or courier.get("license_plate") or ""
+    driver_phone = courier.get("phone") or courier.get("phoneNumber") or "-"
+
+    tracking_url = data.get("trackingURL") or data.get("trackingUrl") or data.get("tracking_url") or ""
+
+    driver_line = html.escape(driver_name)
+    if license_plate:
+        driver_line += f" ({html.escape(license_plate)})"
+
+    lines = [
+        "🛵 <b>Status Pengiriman GrabExpress</b>",
+        "",
+        f"<b>ID Pengiriman:</b> {html.escape(str(delivery_id))}",
+        f"<b>Status:</b> {html.escape(str(status))}",
+        f"<b>Kurir:</b> {driver_line}",
+        f"<b>No. Telp Kurir:</b> {html.escape(str(driver_phone))}",
+    ]
+    if tracking_url:
+        lines.append("")
+        lines.append(f"📍 <i>Live Tracking Peta:</i> <a href=\"{html.escape(tracking_url)}\">Klik di sini untuk buka peta</a>")
+
+    return "\n".join(lines)
+
+
+@restricted
+async def lacakgrab_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /lacakgrab & /trackgrab [deliveryID] — cek status pengiriman GrabExpress."""
+    delivery_id = update.message.text.partition(" ")[2].strip()
+
+    if not delivery_id:
+        await update.message.reply_text(
+            "<b>🛵 Lacak Pengiriman GrabExpress</b>\n\n"
+            "Format:\n"
+            "<code>/lacakgrab [deliveryID]</code>\n\n"
+            "Contoh:\n"
+            "<code>/lacakgrab DELIV-GRAB-982131</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if not grab:
+        await update.message.reply_text(
+            "⚠️ Layanan GrabExpress belum dikonfigurasi (CLIENT_ID/SECRET belum diisi).",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    await update.message.reply_text(f"⏳ Melacak pengiriman <code>{html.escape(delivery_id)}</code>...", parse_mode=ParseMode.HTML)
+
+    try:
+        data = await asyncio.to_thread(grab.get_delivery, delivery_id)
+    except GrabNotFound:
+        await update.message.reply_text(
+            f"Maaf, ID Pengiriman <code>{html.escape(delivery_id)}</code> tidak ditemukan di sistem GrabExpress.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    except GrabError as e:
+        logger.error(f"GrabExpress error saat lacak {delivery_id}: {e}")
+        await update.message.reply_text(
+            "Gagal terhubung ke layanan GrabExpress. Silakan coba beberapa saat lagi."
+        )
+        return
+    except Exception as e:
+        logger.exception(f"Error tak terduga saat lacak Grab {delivery_id}: {e}")
+        await update.message.reply_text(
+            "Gagal terhubung ke layanan GrabExpress. Silakan coba beberapa saat lagi."
+        )
+        return
+
+    await update.message.reply_text(
+        _format_grab_delivery(delivery_id, data),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 
 
 async def check_open_ticket_reminders(context: ContextTypes.DEFAULT_TYPE):
@@ -7161,6 +7250,10 @@ def main():
     app.add_handler(CommandHandler("seedquotes", seedquotes_command))
     app.add_handler(CommandHandler("coffee", coffee_command))
     app.add_handler(CommandHandler("testsearch", testsearch_command))
+
+    # GrabExpress tracking
+    app.add_handler(CommandHandler("lacakgrab", lacakgrab_command))
+    app.add_handler(CommandHandler("trackgrab", lacakgrab_command))
 
     # Knowledge Base / Bank Data commands
     app.add_handler(CommandHandler("tanyabot", tanya_command))

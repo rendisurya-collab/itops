@@ -175,3 +175,19 @@ SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
 # Region & bahasa hasil pencarian (default Indonesia)
 SERPER_GL = os.getenv("SERPER_GL", "id")
 SERPER_HL = os.getenv("SERPER_HL", "id")
+
+# ==== GrabExpress API (tracking pengiriman) ====
+# Kredensial OAuth2 Client Credentials dari Grab Developer Portal.
+GRAB_CLIENT_ID = os.getenv("GRAB_CLIENT_ID", "")
+GRAB_CLIENT_SECRET = os.getenv("GRAB_CLIENT_SECRET", "")
+# Base URL API. Sandbox: https://partner-api.grab.com/grab-express-sandbox
+#                Production: https://partner-api.grab.com
+GRAB_BASE_URL = os.getenv("GRAB_BASE_URL", "https://partner-api.grab.com")
+# Endpoint OAuth token (biasanya https://api.grab.com/grabid/v1/oauth2/token)
+GRAB_OAUTH_URL = os.getenv("GRAB_OAUTH_URL", "https://api.grab.com/grabid/v1/oauth2/token")
+# Scope OAuth (opsional, tergantung konfigurasi partner Grab)
+GRAB_SCOPE = os.getenv("GRAB_SCOPE", "")
+
+
+def grab_configured() -> bool:
+    return bool(GRAB_CLIENT_ID and GRAB_CLIENT_SECRET and GRAB_BASE_URL and GRAB_OAUTH_URL)
