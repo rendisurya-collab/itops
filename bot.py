@@ -3916,6 +3916,126 @@ async def lacakgrab_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ==============================================================================
+# ERASPACE ORDER TRACKING (dumpdo) — /cekorder
+# ==============================================================================
+
+def _fetch_eraspace_order(pomp: str) -> dict:
+    """POST ke endpoint dumpdo Eraspace. Return dict data order pertama.
+
+    Raise ValueError kalau order tidak ditemukan, RuntimeError untuk kendala API.
+    """
+    params = {"user": config.ERASPACE_USER, "pomp": pomp}
+    headers = {"Accept": "application/json"}
+    if config.ERASPACE_COOKIE:
+        headers["Cookie"] = config.ERASPACE_COOKIE
+
+    try:
+        resp = requests.post(config.ERASPACE_DUMPDO_URL, params=params, headers=headers, timeout=20)
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Gagal terhubung: {e}")
+
+    if not resp.ok:
+        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        data = resp.json()
+    except ValueError:
+        raise RuntimeError("Respon bukan JSON valid.")
+
+    # Cari objek order di dalam response (bisa dict langsung, atau di dalam
+    # 'data'/'result'/list). Ambil yang mengandung 'orderNumber'.
+    def _find_order(obj):
+        if isinstance(obj, dict):
+            if "orderNumber" in obj:
+                return obj
+            for v in obj.values():
+                found = _find_order(v)
+                if found:
+                    return found
+        elif isinstance(obj, list):
+            for item in obj:
+                found = _find_order(item)
+                if found:
+                    return found
+        return None
+
+    order = _find_order(data)
+    if not order:
+        raise ValueError("Order tidak ditemukan")
+    return order
+
+
+def _format_eraspace_order(order: dict) -> str:
+    """Susun pesan status order Eraspace dari field yang diminta."""
+    order_number = order.get("orderNumber", "-")
+    order_status = order.get("orderstatus") or order.get("orderStatus") or "-"
+    courier_code = order.get("courierCode", "") or "-"
+    courier_desc = order.get("courierDescription", "") or "-"
+    tracking_no = order.get("trackingNo", "") or "-"
+    lat_long = order.get("latLong", "") or "-"
+    customer_phone = order.get("customerPhone", "") or "-"
+
+    lines = [
+        "📦 <b>Status Order Eraspace</b>",
+        "",
+        f"<b>Order Number:</b> {html.escape(str(order_number))}",
+        f"<b>Status:</b> {html.escape(str(order_status))}",
+        f"<b>Kurir:</b> {html.escape(str(courier_code))} - {html.escape(str(courier_desc))}",
+        f"<b>No. Resi:</b> {html.escape(str(tracking_no))}",
+        f"<b>No. Telp Customer:</b> {html.escape(str(customer_phone))}",
+    ]
+
+    # Kalau latLong ada, buat link ke Google Maps
+    if lat_long and lat_long != "-":
+        maps_url = f"https://www.google.com/maps?q={html.escape(str(lat_long))}"
+        lines.append(f"📍 <b>Lokasi:</b> <a href=\"{maps_url}\">{html.escape(str(lat_long))}</a>")
+    else:
+        lines.append(f"📍 <b>Lokasi:</b> -")
+
+    return "\n".join(lines)
+
+
+@restricted
+async def cekorder_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /cekorder [pomp] — cek status order & tracking dari Eraspace dumpdo API."""
+    pomp = update.message.text.partition(" ")[2].strip()
+
+    if not pomp:
+        await update.message.reply_text(
+            "<b>📦 Cek Status Order Eraspace</b>\n\n"
+            "Format:\n"
+            "<code>/cekorder [nomor pomp]</code>\n\n"
+            "Contoh:\n"
+            "<code>/cekorder 4601361781</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    await update.message.reply_text(f"⏳ Mengecek order <code>{html.escape(pomp)}</code>...", parse_mode=ParseMode.HTML)
+
+    try:
+        order = await asyncio.to_thread(_fetch_eraspace_order, pomp)
+    except ValueError:
+        await update.message.reply_text(
+            f"Maaf, order <code>{html.escape(pomp)}</code> tidak ditemukan di sistem Eraspace.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    except Exception as e:
+        logger.error(f"Eraspace dumpdo error untuk {pomp}: {e}")
+        await update.message.reply_text(
+            "Gagal terhubung ke layanan Eraspace. Silakan coba beberapa saat lagi."
+        )
+        return
+
+    await update.message.reply_text(
+        _format_eraspace_order(order),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
 async def check_open_ticket_reminders(context: ContextTypes.DEFAULT_TYPE):
     if not sdp or not config.SDP_NOTIFY_GROUPS:
         return
@@ -7254,6 +7374,9 @@ def main():
     # GrabExpress tracking
     app.add_handler(CommandHandler("lacakgrab", lacakgrab_command))
     app.add_handler(CommandHandler("trackgrab", lacakgrab_command))
+
+    # Eraspace order tracking (dumpdo)
+    app.add_handler(CommandHandler("cekorder", cekorder_command))
 
     # Knowledge Base / Bank Data commands
     app.add_handler(CommandHandler("tanyabot", tanya_command))

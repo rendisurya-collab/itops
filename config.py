@@ -191,3 +191,13 @@ GRAB_SCOPE = os.getenv("GRAB_SCOPE", "")
 
 def grab_configured() -> bool:
     return bool(GRAB_CLIENT_ID and GRAB_CLIENT_SECRET and GRAB_BASE_URL and GRAB_OAUTH_URL)
+
+
+# ==== Eraspace Order (dumpdo) API ====
+# URL endpoint dumpdo untuk cek status order & tracking.
+ERASPACE_DUMPDO_URL = os.getenv("ERASPACE_DUMPDO_URL", "https://jeanne.eraspace.com/orders/v1/order/dumpdo")
+# Nilai default parameter 'user' pada query string.
+ERASPACE_USER = os.getenv("ERASPACE_USER", "erafone")
+# Cookie Cloudflare (opsional). Isi kalau API menolak request tanpa cookie.
+# Contoh: "__cf_bm=xxxxx". Cookie ini bisa expired, perlu diperbarui berkala.
+ERASPACE_COOKIE = os.getenv("ERASPACE_COOKIE", "")
