@@ -149,7 +149,8 @@ DEPARTMENT_SUBCATEGORY_MAP = {
     "ED CM Monobrand & Online - CM ONLINE DEPT": "Eraspace",
     "ED CM B2B - CM B2B PORTAL OPERATION & DEVELOPMENT DEPT": "Dealer Portal",
     "ED Finance Operation - ED AR RETAIL & E-COMMERCE DEPT": "Dealer Portal",
-    "SS Product & Digital Innovation - SS Digital Product Management": "Eraspace"
+    "SS Product & Digital Innovation - SS Digital Product Management": "Eraspace",
+    "EAL JDS Multichannel - EAL JDS CHANNEL OPERATION DEPT": "JD Sports"
 }
 
 # Fallback subcategory jika tiket tidak punya subcategory dan department tidak cocok mapping
