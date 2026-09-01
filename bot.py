@@ -4112,6 +4112,8 @@ def _fetch_awbpsd(order_number: str, awb: str) -> dict:
         "x-platform": config.AWBPSD_X_PLATFORM,
         "Content-Type": "application/json",
         "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
     }
     if config.AWBPSD_COOKIE:
         headers["Cookie"] = config.AWBPSD_COOKIE
@@ -4130,6 +4132,48 @@ def _fetch_awbpsd(order_number: str, awb: str) -> dict:
         return resp.json()
     except ValueError:
         raise RuntimeError("Respon bukan JSON valid.")
+
+
+@restricted
+async def awbpsd_debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /awbpsddebug [order_number] [awb] — tampilkan status & raw response."""
+    args = context.args
+    order_number = args[0] if len(args) >= 1 else "3301362103"
+    awb = args[1] if len(args) >= 2 else "CO.ESPACE-20260831-1-CVI18C"
+
+    def _raw():
+        headers = {
+            "authorization": config.AWBPSD_AUTH,
+            "x-source": config.AWBPSD_X_SOURCE,
+            "x-platform": config.AWBPSD_X_PLATFORM,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        }
+        if config.AWBPSD_COOKIE:
+            headers["Cookie"] = config.AWBPSD_COOKIE
+        r = requests.post(config.AWBPSD_URL, headers=headers,
+                          json={"order_number": order_number, "awb": awb}, timeout=20)
+        return r.status_code, r.text[:1500], dict(r.headers)
+
+    await update.message.reply_text(f"⏳ Debug awbpsd <code>{html.escape(order_number)}</code>...", parse_mode=ParseMode.HTML)
+    try:
+        status_code, body, resp_headers = await asyncio.to_thread(_raw)
+        ct = resp_headers.get("Content-Type", "")
+        await update.message.reply_text(
+            f"<b>Status:</b> {status_code}\n"
+            f"<b>Content-Type:</b> {html.escape(ct)}\n\n"
+            f"<b>Body (potongan):</b>\n<pre>{html.escape(body)}</pre>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        import traceback
+        await update.message.reply_text(
+            f"⚠️ Exception:\n<pre>{html.escape(f'{type(e).__name__}: {e}')}</pre>\n"
+            f"<pre>{html.escape(traceback.format_exc()[-800:])}</pre>",
+            parse_mode=ParseMode.HTML,
+        )
 
 
 @restricted
@@ -7525,6 +7569,7 @@ def main():
 
     # Eraspace shipping tracking PSD (awbpsd)
     app.add_handler(CommandHandler("awbpsd", awbpsd_command))
+    app.add_handler(CommandHandler("awbpsddebug", awbpsd_debug_command))
 
     # Knowledge Base / Bank Data commands
     app.add_handler(CommandHandler("tanyabot", tanya_command))
