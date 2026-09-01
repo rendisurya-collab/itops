@@ -202,3 +202,15 @@ ERASPACE_USER = os.getenv("ERASPACE_USER", "erafone")
 # Cookie Cloudflare (opsional). Isi kalau API menolak request tanpa cookie.
 # Contoh: "__cf_bm=xxxxx". Cookie ini bisa expired, perlu diperbarui berkala.
 ERASPACE_COOKIE = os.getenv("ERASPACE_COOKIE", "")
+
+# ==== Eraspace Shipping Tracking PSD (awbpsd) API ====
+AWBPSD_URL = os.getenv("AWBPSD_URL", "https://jeanne.eraspace.com/shippings/v2/tracking/order/oms/psd")
+# Header Authorization (Basic). Default dari curl; bisa dioverride via env.
+AWBPSD_AUTH = os.getenv(
+    "AWBPSD_AUTH",
+    "Basic c2hpcHBpbmdiYXNpYzo3NmNkNDJlZTQzZTUxNTIzZTAzNTVjZDE3NTMxY2ZjZjQxYjE2MWNmZDJjNTgwNDJkZjkxZTVmODU1MDQwYTQx",
+)
+AWBPSD_X_SOURCE = os.getenv("AWBPSD_X_SOURCE", "eraspace")
+AWBPSD_X_PLATFORM = os.getenv("AWBPSD_X_PLATFORM", "omsservice")
+# Cookie opsional (Cloudflare). Bisa expired, perlu diperbarui berkala.
+AWBPSD_COOKIE = os.getenv("AWBPSD_COOKIE", "")

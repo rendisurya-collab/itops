@@ -4100,6 +4100,87 @@ async def cekorder_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ==============================================================================
+# ERASPACE SHIPPING TRACKING PSD (/awbpsd)
+# ==============================================================================
+
+def _fetch_awbpsd(order_number: str, awb: str) -> dict:
+    """POST ke API tracking PSD Eraspace. Return response JSON (dict)."""
+    headers = {
+        "authorization": config.AWBPSD_AUTH,
+        "x-source": config.AWBPSD_X_SOURCE,
+        "x-platform": config.AWBPSD_X_PLATFORM,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    if config.AWBPSD_COOKIE:
+        headers["Cookie"] = config.AWBPSD_COOKIE
+
+    payload = {"order_number": order_number, "awb": awb}
+
+    try:
+        resp = requests.post(config.AWBPSD_URL, headers=headers, json=payload, timeout=20)
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Gagal terhubung: {e}")
+
+    if not resp.ok:
+        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+
+    try:
+        return resp.json()
+    except ValueError:
+        raise RuntimeError("Respon bukan JSON valid.")
+
+
+@restricted
+async def awbpsd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /awbpsd [order_number] [awb] — tracking PSD Eraspace.
+
+    Tanpa argumen -> pakai contoh default dari curl.
+    Dengan argumen -> /awbpsd 3301362103 CO.ESPACE-20260831-1-CVI18C
+    """
+    args = context.args
+    if len(args) >= 2:
+        order_number = args[0]
+        awb = args[1]
+    elif len(args) == 1:
+        await update.message.reply_text(
+            "Format:\n<code>/awbpsd [order_number] [awb]</code>\n\n"
+            "Contoh:\n<code>/awbpsd 3301362103 CO.ESPACE-20260831-1-CVI18C</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    else:
+        # Default contoh dari curl awbpsd.json
+        order_number = "3301362103"
+        awb = "CO.ESPACE-20260831-1-CVI18C"
+
+    await update.message.reply_text(
+        f"⏳ Tracking PSD order <code>{html.escape(order_number)}</code>...",
+        parse_mode=ParseMode.HTML,
+    )
+
+    try:
+        data = await asyncio.to_thread(_fetch_awbpsd, order_number, awb)
+    except Exception as e:
+        logger.error(f"AWBPSD error untuk {order_number}: {e}")
+        await update.message.reply_text(
+            "Gagal terhubung ke layanan tracking Eraspace. Silakan coba beberapa saat lagi."
+        )
+        return
+
+    # Tampilkan response JSON secara rapi (pretty print)
+    pretty = json.dumps(data, indent=2, ensure_ascii=False)
+    if len(pretty) > 3800:
+        pretty = pretty[:3800] + "\n... (dipotong)"
+
+    await update.message.reply_text(
+        f"📦 <b>Tracking PSD — {html.escape(order_number)}</b>\n\n"
+        f"<pre>{html.escape(pretty)}</pre>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def check_open_ticket_reminders(context: ContextTypes.DEFAULT_TYPE):
     if not sdp or not config.SDP_NOTIFY_GROUPS:
         return
@@ -7442,6 +7523,9 @@ def main():
     # Eraspace order tracking (dumpdo)
     app.add_handler(CommandHandler("cekorder", cekorder_command))
     app.add_handler(CommandHandler("cekorderdebug", cekorder_debug_command))
+
+    # Eraspace shipping tracking PSD (awbpsd)
+    app.add_handler(CommandHandler("awbpsd", awbpsd_command))
 
     # Knowledge Base / Bank Data commands
     app.add_handler(CommandHandler("tanyabot", tanya_command))
