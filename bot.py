@@ -384,22 +384,40 @@ def save_assign_state(state: dict):
 
 
 def select_technician_round_robin(shift: str, on_duty_techs_raw: str = None) -> dict:
-    """Mengambil teknisi berikutnya secara bergantian dan adil di shift yang sama"""
+    """Mengambil teknisi berikutnya secara bergantian dan adil di shift yang sama.
+
+    PENTING: urutan & duplikat dari daftar teknisi dipertahankan sesuai yang
+    ditulis di jadwal. Jadi kalau satu nama ditulis 2x, dia dapat giliran 2x
+    lipat (misal: adelia, adelia, prizky -> adelia,adelia,prizky,adelia,...).
+    """
     all_techs = load_technicians()
-    
+
     if on_duty_techs_raw:
-        tech_names = [t.strip().lower() for t in on_duty_techs_raw.split(",")]
-        on_duty_techs = [
-            t for t in all_techs 
-            if t.get("name", "").strip().lower() in tech_names or t.get("email", "").strip().lower() in tech_names
-        ]
+        # Pertahankan urutan & duplikat. Bersihkan spasi yang keselip di email
+        # (mis. "adelia. pebriani@..." -> "adelia.pebriani@...").
+        raw_entries = [t.strip() for t in on_duty_techs_raw.split(",") if t.strip()]
+        on_duty_techs = []
+        for entry in raw_entries:
+            key = entry.replace(" ", "").lower()  # normalisasi: buang spasi
+            matched = None
+            for t in all_techs:
+                name_key = t.get("name", "").strip().lower()
+                email_key = t.get("email", "").strip().replace(" ", "").lower()
+                if key == email_key or entry.strip().lower() == name_key:
+                    matched = t
+                    break
+            if matched:
+                on_duty_techs.append(matched)
+            else:
+                # Nama/email tidak terdaftar di JSON — pakai object sementara
+                # (buang spasi di email supaya update ke SDP tetap valid)
+                on_duty_techs.append({"name": entry, "email": entry.replace(" ", "")})
     else:
         on_duty_techs = [t for t in all_techs if t.get("shift") == shift]
 
     if not on_duty_techs:
-        # Fallback jika nama dari excel tidak cocok dengan JSON, pakai object temporary
         if on_duty_techs_raw:
-            first_tech = on_duty_techs_raw.split(",")[0].strip()
+            first_tech = on_duty_techs_raw.split(",")[0].strip().replace(" ", "")
             return {"name": first_tech, "email": first_tech}
         raise ValueError(f"Tidak ada teknisi yang terdaftar untuk shift {shift}")
 
@@ -4141,14 +4159,14 @@ async def _broadcast_notify(context: ContextTypes.DEFAULT_TYPE, text: str):
 
 
 async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
-    await _broadcast_notify(context, "Reminder: Jangan lupa isi logwork")
+    await _broadcast_notify(context, "Reminder: Jangan lupa isi logwork guys")
 
 
 async def interval_reminder(context: ContextTypes.DEFAULT_TYPE):
     now = dt.datetime.now(TZ)
     if not (config.REMINDER_START_HOUR <= now.hour < config.REMINDER_END_HOUR):
         return
-    await _broadcast_notify(context, "Reminder: jangan lupa isi logwork")
+    await _broadcast_notify(context, "Reminder: jangan lupa isi logwork guys")
 
 
 # ==============================================================================
