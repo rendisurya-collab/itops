@@ -4136,24 +4136,23 @@ def _fetch_awbpsd(order_number: str, awb: str) -> dict:
 async def awbpsd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler /awbpsd [order_number] [awb] — tracking PSD Eraspace.
 
-    Tanpa argumen -> pakai contoh default dari curl.
-    Dengan argumen -> /awbpsd 3301362103 CO.ESPACE-20260831-1-CVI18C
+    order_number & awb WAJIB diisi user (dinamis, beda-beda tiap order).
+    Contoh: /awbpsd 3301362103 CO.ESPACE-20260831-1-CVI18C
     """
     args = context.args
-    if len(args) >= 2:
-        order_number = args[0]
-        awb = args[1]
-    elif len(args) == 1:
+    if len(args) < 2:
         await update.message.reply_text(
-            "Format:\n<code>/awbpsd [order_number] [awb]</code>\n\n"
-            "Contoh:\n<code>/awbpsd 3301362103 CO.ESPACE-20260831-1-CVI18C</code>",
+            "<b>📦 Tracking PSD Eraspace</b>\n\n"
+            "Format:\n"
+            "<code>/awbpsd [order_number] [awb]</code>\n\n"
+            "Contoh:\n"
+            "<code>/awbpsd 3301362103 CO.ESPACE-20260831-1-CVI18C</code>",
             parse_mode=ParseMode.HTML,
         )
         return
-    else:
-        # Default contoh dari curl awbpsd.json
-        order_number = "3301362103"
-        awb = "CO.ESPACE-20260831-1-CVI18C"
+
+    order_number = args[0]
+    awb = args[1]
 
     await update.message.reply_text(
         f"⏳ Tracking PSD order <code>{html.escape(order_number)}</code>...",
