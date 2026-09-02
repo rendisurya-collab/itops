@@ -4817,108 +4817,135 @@ def _build_delres_csv(items: list) -> str:
 
 
 @restricted
-async def delreservation_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler /delreservation — mulai proses delete reservation."""
-    context.user_data.clear()
-    await update.message.reply_text(
-        "<b>🗑 Delete Reservation</b>\n\n"
-        "Pilih salah satu cara input:\n\n"
-        "<b>1. Upload file CSV</b>\n"
-        "Format kolom: businessUnitCode, transactionNumber, itemCode, qty, orderDate\n\n"
-        "<b>2. Ketik langsung:</b>\n"
-        "<code>bucode: E370\n"
-        "ordernumber: 8302562258\n"
-        "sku: 8100258103\n"
-        "qty: 1</code>\n\n"
-        "Untuk multiple item, pisahkan dengan baris kosong.\n"
-        "Kirim sekarang (file atau teks), atau /cancel untuk batal.",
-        parse_mode=ParseMode.HTML,
-    )
-    return DELRES_INPUT
-
-
-async def delreservation_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Terima input dari user: bisa file CSV atau teks."""
+async def delreservation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Direct execution: /delreservation [file or text input]
+    
+    User can:
+    1. Upload CSV file with columns: businessUnitCode, transactionNumber, itemCode, qty, orderDate
+    2. Type label format manually
+    
+    Executes immediately without confirmation step.
+    """
+    chat_id = update.effective_chat.id
+    thread_id = _thread_id_from_update(update)
+    csv_path = None
+    
+    # Check if this is a file upload or text input
     if update.message.document:
-        # User upload file CSV
+        # User uploaded file
         doc = update.message.document
         if not doc.file_name.lower().endswith(".csv"):
-            await update.message.reply_text("File harus berformat .csv. Coba upload ulang atau ketik manual.")
-            return DELRES_INPUT
-
+            await update.message.reply_text("File harus berformat .csv. Upload ulang atau ketik manual.")
+            return
+        
         file = await doc.get_file()
         csv_path = os.path.join(DELRES_CSV_DIR, f"delres_upload_{dt.datetime.now(TZ).strftime('%Y%m%d_%H%M%S')}.csv")
         await file.download_to_drive(csv_path)
-
-        context.user_data["delres_csv"] = csv_path
-        context.user_data["delres_source"] = "file"
-
-        # Baca isi untuk preview
+        
+        # Read for row count
         with open(csv_path, "r", encoding="utf-8") as f:
             lines = [l.strip() for l in f.readlines() if l.strip()]
-        data_count = len(lines) - 1  # minus header
-
-        await update.message.reply_text(
-            f"📄 File diterima: <b>{doc.file_name}</b>\n"
-            f"Jumlah data: <b>{data_count} baris</b>\n\n"
-            "Eksekusi delete reservation sekarang?",
+        data_count = len(lines) - 1
+        
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"⏳ Memproses Delete Reservation ({data_count} baris), harap tunggu...",
             parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("✅ Eksekusi", callback_data="delres_yes"),
-                    InlineKeyboardButton("❌ Batal", callback_data="delres_no"),
-                ]
-            ]),
+            message_thread_id=thread_id,
         )
-        return DELRES_CONFIRM
-
-    elif update.message.text:
-        # User ketik teks manual
+    
+    elif update.message.text and not update.message.text.startswith("/"):
+        # User typed text manually (not a command)
         text = update.message.text.strip()
         items = _parse_delres_text(text)
-
+        
         if not items:
             await update.message.reply_text(
-                "Format tidak dikenali. Pastikan format seperti ini:\n\n"
+                "Format tidak dikenali. Gunakan:\n\n"
                 "<code>bucode: E370\n"
                 "ordernumber: 8302562258\n"
                 "sku: 8100258103\n"
                 "qty: 1</code>\n\n"
-                "Coba lagi atau /cancel untuk batal.",
+                "Untuk multiple, pisahkan dengan baris kosong.",
                 parse_mode=ParseMode.HTML,
             )
-            return DELRES_INPUT
-
+            return
+        
         csv_path = _build_delres_csv(items)
-        context.user_data["delres_csv"] = csv_path
-        context.user_data["delres_source"] = "text"
-        context.user_data["delres_items"] = items
-
+        
         # Preview
         preview_lines = []
         for i, item in enumerate(items, 1):
             skus = ", ".join(item["itemCodes"])
             preview_lines.append(
-                f"{i}. {item['transactionNumber']} | BU: {item['businessUnitCode']} | "
-                f"SKU: {skus} | Qty: {item.get('qty', 1)}"
+                f"{i}. {item['transactionNumber']} | BU: {item['businessUnitCode']} | SKU: {skus}"
             )
-
-        await update.message.reply_text(
-            f"<b>🗑 Konfirmasi Delete Reservation</b>\n\n"
-            + "\n".join(preview_lines)
-            + "\n\nEksekusi sekarang?",
+        
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"⏳ Memproses Delete Reservation ({len(items)} item)...\n\n" + "\n".join(preview_lines),
             parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("✅ Eksekusi", callback_data="delres_yes"),
-                    InlineKeyboardButton("❌ Batal", callback_data="delres_no"),
-                ]
-            ]),
+            message_thread_id=thread_id,
         )
-        return DELRES_CONFIRM
+    
+    else:
+        # Initial command /delreservation with no file/text
+        await update.message.reply_text(
+            "<b>🗑 Delete Reservation</b>\n\n"
+            "Upload file CSV atau ketik data:\n\n"
+            "<b>Format:</b>\n"
+            "<code>bucode: E370\n"
+            "ordernumber: 8302562258\n"
+            "sku: 8100258103\n"
+            "qty: 1</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    
+    # Execute directly (no confirmation step)
+    try:
+        if not csv_path:
+            return
+        
+        output = await asyncio.to_thread(_execute_delreservation, csv_path)
+        
+        if len(output) <= 3500:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"✅ <b>Delete Reservation Selesai</b>\n\n<pre>{html.escape(output)}</pre>",
+                parse_mode=ParseMode.HTML,
+                message_thread_id=thread_id,
+                read_timeout=120,
+                write_timeout=120,
+            )
+        else:
+            excel_buffer = _build_log_excel_bytes(output, header="Log Details")
+            filename = f"delete_reservation_log_{dt.datetime.now(TZ).strftime('%Y%m%d_%H%M%S')}.xlsx"
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(excel_buffer, filename=filename),
+                caption="✅ Delete Reservation Selesai (Excel export)",
+                message_thread_id=thread_id,
+                read_timeout=180,
+                write_timeout=180,
+            )
+    
+    except Exception as e:
+        logger.exception(f"Error delete reservation: {e}")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"⚠️ Gagal: {html.escape(str(e))}",
+            message_thread_id=thread_id,
+        )
+    
+    finally:
+        # Cleanup temp file
+        if csv_path and os.path.exists(csv_path):
+            try:
+                os.remove(csv_path)
+            except OSError:
+                pass
 
-    await update.message.reply_text("Kirim file CSV atau ketik data reservasi. /cancel untuk batal.")
-    return DELRES_INPUT
 
 
 def _build_log_excel_bytes(output: str, header: str = "Log Details") -> io.BytesIO:
@@ -7652,20 +7679,16 @@ def main():
     )
     app.add_handler(run_action_conv)
 
-    # ConversationHandler delete reservation
-    delres_conv = ConversationHandler(
-        entry_points=[CommandHandler("delreservation", delreservation_start)],
-        states={
-            DELRES_INPUT: [
-                MessageHandler(filters.Document.ALL, delreservation_input),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, delreservation_input),
-            ],
-            DELRES_CONFIRM: [CallbackQueryHandler(delreservation_confirm, pattern="^delres_")],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False,
-    )
-    app.add_handler(delres_conv)
+    # Direct execution: delete reservation
+    app.add_handler(CommandHandler("delreservation", delreservation_command))
+    app.add_handler(MessageHandler(
+        filters.Document.ALL & ~filters.COMMAND,
+        delreservation_command
+    ))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.Regex(r"^(bucode|ordernumber|sku|qty|businessunit)"),
+        delreservation_command
+    ))
 
     # ConversationHandler release voucher
     relvoucher_conv = ConversationHandler(
@@ -7691,7 +7714,16 @@ def main():
     app.add_handler(CommandHandler("awb", awb_command))
     app.add_handler(CommandHandler("awbjne", awbjne_command))
     
-    app.add_handler(CallbackQueryHandler(delreservation_confirm, pattern="^delres_"))
+    # Direct execution: delete reservation
+    app.add_handler(CommandHandler("delreservation", delreservation_command))
+    app.add_handler(MessageHandler(
+        filters.Document.ALL & ~filters.COMMAND,
+        delreservation_command
+    ))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.Regex(r"^(bucode|ordernumber|sku|qty|businessunit)"),
+        delreservation_command
+    ))
 
     # ConversationHandler update shift
     updateshift_conv = ConversationHandler(
