@@ -900,7 +900,7 @@ def _extract_project_prefix(text: str):
     DEL_GUIDE_PICK,
     DEL_GUIDE_CONFIRM,
     UPDATESHIFT_UPLOAD,
-) = range(47)
+) = range(46)
 
 
 def _thread_id_from_update(update: Update):
