@@ -7,6 +7,12 @@ import datetime as dt
 import logging
 from typing import Dict
 
+try:
+    import cloudscraper
+    HAS_CLOUDSCRAPER = True
+except ImportError:
+    HAS_CLOUDSCRAPER = False
+
 import requests
 
 logger = logging.getLogger(__name__)
@@ -90,24 +96,37 @@ def sync_stock_to_webhook(
         "timestamps": timestamps,
     }
     
-    # Build headers (lebih lengkap untuk bypass Cloudflare)
+    # Build headers
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json",
         "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://stockadapters.eraspace.com/",
     }
     
     if webhook_cookie:
         headers["Cookie"] = webhook_cookie
     
     try:
-        response = requests.post(
-            webhook_url,
-            headers=headers,
-            json=payload,
-            timeout=30,
-        )
+        # Try dengan cloudscraper jika available (untuk bypass Cloudflare otomatis)
+        if HAS_CLOUDSCRAPER and "cloudflare" in webhook_url.lower():
+            logger.info(f"Using cloudscraper to bypass Cloudflare")
+            scraper = cloudscraper.create_scraper()
+            response = scraper.post(
+                webhook_url,
+                headers=headers,
+                json=payload,
+                timeout=30,
+            )
+        else:
+            # Fallback ke requests biasa
+            response = requests.post(
+                webhook_url,
+                headers=headers,
+                json=payload,
+                timeout=30,
+            )
         
         # Log response
         logger.info(
@@ -130,10 +149,12 @@ def sync_stock_to_webhook(
             }
         else:
             # Error response from API
+            # Truncate HTML responses (Cloudflare error pages)
+            error_text = response.text[:500] if len(response.text) < 1000 else f"[{len(response.text)} chars HTML response]"
             return {
                 "success": False,
                 "status_code": response.status_code,
-                "error": response.text[:500],  # Limit error message length
+                "error": error_text,
                 "response": None,
             }
     

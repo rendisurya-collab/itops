@@ -5807,6 +5807,120 @@ def _format_promo_response(data, sku: str, bucode: str) -> str:
 
 
 @restricted
+async def synctowebhook_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler untuk opsi 2 (label format) - multi-line input.
+    
+    Triggered ketika user kirim pesan dengan format:
+    article_code: ABC123
+    site_code: SS20
+    ...
+    """
+    chat_id = update.effective_chat.id
+    thread_id = _thread_id_from_update(update)
+    text = update.message.text.strip()
+    
+    # Check if webhook is configured
+    if not config.webhook_stock_configured():
+        await update.message.reply_text(
+            "⚠️ Webhook stock belum dikonfigurasi. Set WEBHOOK_STOCK_URL di .env",
+        )
+        return
+    
+    # Parse data
+    data = parse_synctowebhook_text(text)
+    
+    if not data:
+        # Not valid webhook input format, ignore
+        return
+    
+    # Validate required fields
+    required_fields = ["article_code", "site_code", "company_code", "stock"]
+    missing = [f for f in required_fields if f not in data]
+    if missing:
+        await update.message.reply_text(
+            f"❌ Field wajib hilang: {', '.join(missing)}\n\n"
+            "Gunakan format:\n"
+            "<code>article_code: value\n"
+            "site_code: value\n"
+            "company_code: value\n"
+            "stock: value</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    
+    # Auto-fill timestamps if not provided
+    if "timestamps" not in data or data["timestamps"].lower() in ["(datenow)", "now", ""]:
+        data["timestamps"] = auto_fill_timestamp(data.get("timestamps", ""))
+    else:
+        data["timestamps"] = auto_fill_timestamp(data["timestamps"])
+    
+    # Ensure stock is numeric
+    try:
+        stock_val = int(data["stock"])
+    except ValueError:
+        await update.message.reply_text(
+            f"❌ Nilai 'stock' harus berupa angka, diterima: {data['stock']}",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    
+    # Execute webhook sync
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="⏳ Mengirim data ke webhook...",
+        parse_mode=ParseMode.HTML,
+        message_thread_id=thread_id,
+    )
+    
+    try:
+        result = await asyncio.to_thread(
+            sync_stock_to_webhook,
+            data["article_code"],
+            data["site_code"],
+            data["company_code"],
+            stock_val,
+            data["timestamps"],
+            config.WEBHOOK_STOCK_URL,
+            config.WEBHOOK_STOCK_COOKIE,
+        )
+        
+        if result["success"]:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "✅ <b>Sync Stock Webhook Berhasil!</b>\n\n"
+                    f"• <b>Article Code:</b> <code>{html.escape(data['article_code'])}</code>\n"
+                    f"• <b>Site Code:</b> <code>{html.escape(data['site_code'])}</code>\n"
+                    f"• <b>Company Code:</b> <code>{html.escape(data['company_code'])}</code>\n"
+                    f"• <b>Stock:</b> <code>{stock_val}</code>\n"
+                    f"• <b>Timestamps:</b> <code>{html.escape(data['timestamps'])}</code>\n\n"
+                    f"<b>Status API:</b> HTTP {result['status_code']}"
+                ),
+                parse_mode=ParseMode.HTML,
+                message_thread_id=thread_id,
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"⚠️ <b>Webhook Error</b>\n\n"
+                    f"<b>Status:</b> {result['status_code'] or 'Network Error'}\n"
+                    f"<b>Error:</b> <code>{html.escape(result['error'][:200])}</code>"
+                ),
+                parse_mode=ParseMode.HTML,
+                message_thread_id=thread_id,
+            )
+    
+    except Exception as e:
+        logger.exception(f"Error sync stock webhook: {e}")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"❌ Gagal: {html.escape(str(e))}",
+            message_thread_id=thread_id,
+        )
+
+
+@restricted
 async def synctowebhook_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Direct execution: /synctowebhook [data]
     
@@ -7809,10 +7923,13 @@ def main():
     # ConversationHandler check stock
     # REMOVED - now using direct execution stock_command
 
-    # Direct execution commands (no ConversationHandler needed)
-    app.add_handler(CommandHandler("stock", stock_command))
+    # Direct execution: sync webhook stock
     app.add_handler(CommandHandler("synctowebhook", synctowebhook_command))
-    app.add_handler(CommandHandler("promo", promo_command))
+    # Catch opsi 2 (label format) - multi-line input after /synctowebhook
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.Regex(r"^(article_code|site_code|company_code|stock|timestamps)"),
+        synctowebhook_input_handler,
+    ))
     app.add_handler(CommandHandler("awb", awb_command))
     app.add_handler(CommandHandler("awbjne", awbjne_command))
     
