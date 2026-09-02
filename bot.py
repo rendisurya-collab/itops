@@ -5838,13 +5838,12 @@ async def synctowebhook_input_handler(update: Update, context: ContextTypes.DEFA
     missing = [f for f in required_fields if f not in data]
     if missing:
         await update.message.reply_text(
-            f"❌ Field wajib hilang: {', '.join(missing)}\n\n"
+            f"Field wajib hilang: {', '.join(missing)}\n\n"
             "Gunakan format:\n"
-            "<code>article_code: value\n"
+            "article_code: value\n"
             "site_code: value\n"
             "company_code: value\n"
-            "stock: value</code>",
-            parse_mode=ParseMode.HTML,
+            "stock: value"
         )
         return
     
@@ -5859,16 +5858,14 @@ async def synctowebhook_input_handler(update: Update, context: ContextTypes.DEFA
         stock_val = int(data["stock"])
     except ValueError:
         await update.message.reply_text(
-            f"❌ Nilai 'stock' harus berupa angka, diterima: {data['stock']}",
-            parse_mode=ParseMode.HTML,
+            f"Nilai 'stock' harus berupa angka, diterima: {data['stock']}"
         )
         return
     
     # Execute webhook sync
     await context.bot.send_message(
         chat_id=chat_id,
-        text="⏳ Mengirim data ke webhook...",
-        parse_mode=ParseMode.HTML,
+        text="Mengirim data ke webhook...",
         message_thread_id=thread_id,
     )
     
@@ -5888,26 +5885,24 @@ async def synctowebhook_input_handler(update: Update, context: ContextTypes.DEFA
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    "✅ <b>Sync Stock Webhook Berhasil!</b>\n\n"
-                    f"• <b>Article Code:</b> <code>{html.escape(data['article_code'])}</code>\n"
-                    f"• <b>Site Code:</b> <code>{html.escape(data['site_code'])}</code>\n"
-                    f"• <b>Company Code:</b> <code>{html.escape(data['company_code'])}</code>\n"
-                    f"• <b>Stock:</b> <code>{stock_val}</code>\n"
-                    f"• <b>Timestamps:</b> <code>{html.escape(data['timestamps'])}</code>\n\n"
-                    f"<b>Status API:</b> HTTP {result['status_code']}"
+                    "SYNC BERHASIL\n\n"
+                    f"Article Code: {data['article_code']}\n"
+                    f"Site Code: {data['site_code']}\n"
+                    f"Company Code: {data['company_code']}\n"
+                    f"Stock: {stock_val}\n"
+                    f"Timestamps: {data['timestamps']}\n\n"
+                    f"Status API: HTTP {result['status_code']}"
                 ),
-                parse_mode=ParseMode.HTML,
                 message_thread_id=thread_id,
             )
         else:
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    f"⚠️ <b>Webhook Error</b>\n\n"
-                    f"<b>Status:</b> {result['status_code'] or 'Network Error'}\n"
-                    f"<b>Error:</b> <code>{html.escape(result['error'][:200])}</code>"
+                    f"WEBHOOK ERROR\n\n"
+                    f"Status: {result['status_code'] or 'Network Error'}\n"
+                    f"Error: {result['error'][:200]}"
                 ),
-                parse_mode=ParseMode.HTML,
                 message_thread_id=thread_id,
             )
     
@@ -5915,7 +5910,7 @@ async def synctowebhook_input_handler(update: Update, context: ContextTypes.DEFA
         logger.exception(f"Error sync stock webhook: {e}")
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"❌ Gagal: {html.escape(str(e))}",
+            text=f"Gagal: {str(e)}",
             message_thread_id=thread_id,
         )
 
@@ -5955,20 +5950,19 @@ async def synctowebhook_command(update: Update, context: ContextTypes.DEFAULT_TY
         data = parse_synctowebhook_text(parts[1].strip())
     
     if not data:
-        # No args -> show usage
+        # No args -> show usage (plain text, no formatting)
         await update.message.reply_text(
-            "<b>🔄 Sync Stock ke Webhook</b>\n\n"
+            "/synctowebhook - Sync Stock ke Webhook\n\n"
             "Kamu bisa lakukan opsi:\n\n"
-            "<b>Opsi 1 - Shortcut Format:</b>\n"
-            '<code>/synctowebhook "article_code": ABC123, "site_code": SS20, "company_code": COMPANY1, "stock": 100</code>\n\n'
-            "<b>Opsi 2 - Label Format:</b>\n"
-            "<code>article_code: ABC123\n"
+            "Opsi 1 - Shortcut Format:\n"
+            '/synctowebhook "article_code": ABC123, "site_code": SS20, "company_code": COMPANY1, "stock": 100\n\n'
+            "Opsi 2 - Label Format:\n"
+            "article_code: ABC123\n"
             "site_code: SS20\n"
             "company_code: COMPANY1\n"
             "stock: 100\n"
-            "timestamps: 2026-09-02T23:05:00Z (opsional)</code>\n\n"
-            "Jika timestamps tidak diisi, akan otomatis gunakan waktu saat ini.",
-            parse_mode=ParseMode.HTML,
+            "timestamps: 2026-09-02T23:05:00Z (opsional)\n\n"
+            "Jika timestamps tidak diisi, akan otomatis gunakan waktu saat ini."
         )
         return
     
@@ -5977,13 +5971,12 @@ async def synctowebhook_command(update: Update, context: ContextTypes.DEFAULT_TY
     missing = [f for f in required_fields if f not in data]
     if missing:
         await update.message.reply_text(
-            f"❌ Field wajib hilang: {', '.join(missing)}\n\n"
+            f"Field wajib hilang: {', '.join(missing)}\n\n"
             "Gunakan format:\n"
-            "<code>article_code: value\n"
+            "article_code: value\n"
             "site_code: value\n"
             "company_code: value\n"
-            "stock: value</code>",
-            parse_mode=ParseMode.HTML,
+            "stock: value"
         )
         return
     
@@ -5998,16 +5991,14 @@ async def synctowebhook_command(update: Update, context: ContextTypes.DEFAULT_TY
         stock_val = int(data["stock"])
     except ValueError:
         await update.message.reply_text(
-            f"❌ Nilai 'stock' harus berupa angka, diterima: {data['stock']}",
-            parse_mode=ParseMode.HTML,
+            f"Nilai 'stock' harus berupa angka, diterima: {data['stock']}"
         )
         return
     
     # Execute webhook sync
     await context.bot.send_message(
         chat_id=chat_id,
-        text="⏳ Mengirim data ke webhook...",
-        parse_mode=ParseMode.HTML,
+        text="Mengirim data ke webhook...",
         message_thread_id=thread_id,
     )
     
@@ -6027,26 +6018,24 @@ async def synctowebhook_command(update: Update, context: ContextTypes.DEFAULT_TY
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    "✅ <b>Sync Stock Webhook Berhasil!</b>\n\n"
-                    f"• <b>Article Code:</b> <code>{html.escape(data['article_code'])}</code>\n"
-                    f"• <b>Site Code:</b> <code>{html.escape(data['site_code'])}</code>\n"
-                    f"• <b>Company Code:</b> <code>{html.escape(data['company_code'])}</code>\n"
-                    f"• <b>Stock:</b> <code>{stock_val}</code>\n"
-                    f"• <b>Timestamps:</b> <code>{html.escape(data['timestamps'])}</code>\n\n"
-                    f"<b>Status API:</b> HTTP {result['status_code']}"
+                    "SYNC BERHASIL\n\n"
+                    f"Article Code: {data['article_code']}\n"
+                    f"Site Code: {data['site_code']}\n"
+                    f"Company Code: {data['company_code']}\n"
+                    f"Stock: {stock_val}\n"
+                    f"Timestamps: {data['timestamps']}\n\n"
+                    f"Status API: HTTP {result['status_code']}"
                 ),
-                parse_mode=ParseMode.HTML,
                 message_thread_id=thread_id,
             )
         else:
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    f"⚠️ <b>Webhook Error</b>\n\n"
-                    f"<b>Status:</b> {result['status_code'] or 'Network Error'}\n"
-                    f"<b>Error:</b> <code>{html.escape(result['error'])}</code>"
+                    f"WEBHOOK ERROR\n\n"
+                    f"Status: {result['status_code'] or 'Network Error'}\n"
+                    f"Error: {result['error']}"
                 ),
-                parse_mode=ParseMode.HTML,
                 message_thread_id=thread_id,
             )
     
@@ -6054,7 +6043,7 @@ async def synctowebhook_command(update: Update, context: ContextTypes.DEFAULT_TY
         logger.exception(f"Error sync stock webhook: {e}")
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"❌ Gagal: {html.escape(str(e))}",
+            text=f"Gagal: {str(e)}",
             message_thread_id=thread_id,
         )
 
