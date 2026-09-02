@@ -214,3 +214,13 @@ AWBPSD_X_SOURCE = os.getenv("AWBPSD_X_SOURCE", "eraspace")
 AWBPSD_X_PLATFORM = os.getenv("AWBPSD_X_PLATFORM", "omsservice")
 # Cookie opsional (Cloudflare). Bisa expired, perlu diperbarui berkala.
 AWBPSD_COOKIE = os.getenv("AWBPSD_COOKIE", "")
+
+# ==== Stock Webhook Sync (External API) ====
+# Endpoint untuk sync data stok ke sistem eksternal
+WEBHOOK_STOCK_URL = os.getenv("WEBHOOK_STOCK_URL", "https://stockadapters.eraspace.com/v1/webhooks/stock")
+# Cookie Cloudflare (opsional, bisa di-rotate via env)
+WEBHOOK_STOCK_COOKIE = os.getenv("WEBHOOK_STOCK_COOKIE", "")
+
+def webhook_stock_configured() -> bool:
+    """Check jika webhook stock sudah dikonfigurasi."""
+    return bool(WEBHOOK_STOCK_URL)
