@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
 import html
+import io
 import json
 import logging
 import os
@@ -13,7 +14,7 @@ from zoneinfo import ZoneInfo
 import openpyxl
 import pytz
 import requests
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, Conflict, NetworkError, TimedOut
 from telegram.ext import (
@@ -4697,6 +4698,32 @@ async def delreservation_input(update: Update, context: ContextTypes.DEFAULT_TYP
     return DELRES_INPUT
 
 
+def _build_log_excel_bytes(output: str, header: str = "Log Details") -> io.BytesIO:
+    """Konversi teks log (multi-baris) menjadi file Excel .xlsx di in-memory buffer.
+
+    Kolom: No | {header}. Tidak menulis ke disk (pakai io.BytesIO).
+    Return BytesIO yang sudah di-seek ke awal, siap dikirim via send_document.
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Log"
+    ws.append(["No", header])
+
+    lines = [ln for ln in output.splitlines() if ln.strip() != ""]
+    for i, line in enumerate(lines, 1):
+        ws.cell(row=i + 1, column=1, value=i)
+        ws.cell(row=i + 1, column=2, value=line)
+
+    # Lebar kolom biar rapi
+    ws.column_dimensions["A"].width = 6
+    ws.column_dimensions["B"].width = 100
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
 async def delreservation_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Konfirmasi dan eksekusi delete reservation via Python requests."""
     query = update.callback_query
@@ -4719,26 +4746,50 @@ async def delreservation_confirm(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data.clear()
         return ConversationHandler.END
 
-    await query.edit_message_text("⏳ Menjalankan delete reservation, mohon tunggu...")
+    chat_id = update.effective_chat.id
+    thread_id = _thread_id_from_update(update)
+
+    # Kirim status awal supaya user tahu proses berjalan di background
+    await query.edit_message_text("⏳ Memproses Delete Reservation, harap tunggu sampai selesai...")
 
     try:
+        # Tunggu SELURUH eksekusi selesai (tanpa dipotong timeout thread).
+        # asyncio.to_thread menjalankan fungsi blocking di thread terpisah dan
+        # kita await sampai semua baris data diproses.
         output = await asyncio.to_thread(_execute_delreservation, csv_path)
 
-        if len(output) > 3500:
-            output = output[:3500] + "\n... (output dipotong)"
-
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"✅ <b>Delete Reservation Selesai</b>\n\n<pre>{html.escape(output)}</pre>",
-            parse_mode=ParseMode.HTML,
-            message_thread_id=_thread_id_from_update(update),
-        )
+        if len(output) <= 3500:
+            # Output pendek -> kirim sebagai teks HTML biasa
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"✅ <b>Delete Reservation Selesai</b>\n\n<pre>{html.escape(output)}</pre>",
+                parse_mode=ParseMode.HTML,
+                message_thread_id=thread_id,
+                read_timeout=120,
+                write_timeout=120,
+            )
+        else:
+            # Output besar -> ekspor ke Excel in-memory, jangan dipotong
+            excel_buffer = _build_log_excel_bytes(output, header="Log Details")
+            filename = f"delete_reservation_log_{dt.datetime.now(TZ).strftime('%Y%m%d_%H%M%S')}.xlsx"
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(excel_buffer, filename=filename),
+                caption=(
+                    "✅ Delete Reservation Selesai. Karena log melebihi 3500 karakter, "
+                    "detail log lengkap dilampirkan dalam file Excel berikut."
+                ),
+                message_thread_id=thread_id,
+                read_timeout=180,
+                write_timeout=180,
+            )
 
     except Exception as e:
+        logger.exception(f"Gagal menjalankan/ekspor delete reservation: {e}")
         await context.bot.send_message(
-            chat_id=update.effective_chat.id,
+            chat_id=chat_id,
             text=f"⚠️ Gagal menjalankan delete reservation:\n{html.escape(str(e))}",
-            message_thread_id=_thread_id_from_update(update),
+            message_thread_id=thread_id,
         )
 
     # Cleanup temp file
