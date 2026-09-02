@@ -54,6 +54,194 @@ _JIRA_CLIENT_CACHE = {}  # telegram_user_id (str) -> JiraClient
 TZ = ZoneInfo(config.TIMEZONE)
 
 # ==============================================================================
+# DIRECT-EXECUTION HANDLER UTILITIES & DECORATORS
+# ==============================================================================
+"""
+Pattern for Direct Execution Handlers (menghilangkan ConversationHandler):
+
+1. Handler function receives: update, context
+2. Parse args dari update.message.text (split by spaces or line-based)
+3. Validate & extract required args, return error usage jika invalid
+4. Execute logic langsung (no confirmation prompt)
+5. Send result via context.bot.send_message or send_document
+6. No state management needed, no ConversationHandler.END
+
+Keuntungan:
+- Lebih cepat: tidak perlu multi-step conversation
+- Lebih simpel: tidak ada state machine complexity
+- Lebih aman: try-except menangkap semua error
+- User experience: instant response dengan preview/result
+"""
+
+
+class DirectExecError(Exception):
+    """Custom exception untuk direct execution handlers."""
+    pass
+
+
+def parse_shortcut_args(text: str, min_args: int = 1, max_args: int = None) -> tuple[bool, list, str]:
+    """Parse shortcut arguments dari text (space-separated).
+    
+    Return: (success, args_list, error_msg)
+    Contoh: "/stock 8100152403 BJC2" -> (True, ["8100152403", "BJC2"], "")
+    """
+    parts = text.split()
+    # Skip command (first element like "/stock")
+    args = parts[1:] if parts else []
+    
+    if len(args) < min_args:
+        return False, [], f"Kurang argumen. Minimal {min_args}, diterima {len(args)}"
+    if max_args and len(args) > max_args:
+        return False, [], f"Terlalu banyak argumen. Maksimal {max_args}, diterima {len(args)}"
+    
+    return True, args, ""
+
+
+def parse_label_format(text: str, required_labels: list) -> tuple[bool, dict, str]:
+    """Parse label format text (fieldname: value per line, items separated by blank line).
+    
+    Return: (success, data_dict, error_msg)
+    Contoh:
+      sku: 8100152403
+      source: BJC2
+      unit: pcs
+    -> (True, {"sku": "8100152403", "source": "BJC2", "unit": "pcs"}, "")
+    """
+    data = {}
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        if ':' not in line:
+            return False, {}, f"Format salah di baris: {line}. Gunakan 'fieldname: value'"
+        
+        key, val = line.split(':', 1)
+        data[key.strip().lower()] = val.strip()
+    
+    missing = [lb for lb in required_labels if lb not in data]
+    if missing:
+        return False, {}, f"Field wajib hilang: {', '.join(missing)}"
+    
+    return True, data, ""
+
+
+async def execute_safe(coro, timeout: int = 30) -> tuple[bool, str]:
+    """Eksekusi coroutine dengan error handling & timeout.
+    
+    Return: (success, result_or_error_msg)
+    """
+    try:
+        import asyncio
+        result = await asyncio.wait_for(coro, timeout=timeout)
+        return True, result
+    except asyncio.TimeoutError:
+        return False, f"⏱️ Timeout setelah {timeout} detik"
+    except Exception as e:
+        logger.exception(f"Error dalam execute_safe: {e}")
+        return False, f"❌ Error: {html.escape(str(e))}"
+
+
+async def format_output(output: str, max_text_chars: int = 3500) -> tuple[str, bytes]:
+    """Format output: return (message_text, excel_bytes atau None).
+    
+    Jika output <= max_text_chars: return (text, None)
+    Jika output > max_text_chars: return ("", excel_bytes) -> buat Excel in-memory
+    """
+    if len(output) <= max_text_chars:
+        return output, None
+    else:
+        # Buat Excel dari output
+        excel_bytes = _build_log_excel_bytes(output, header="Output Details")
+        return "", excel_bytes.getvalue()
+
+
+def _thread_id_from_update(update: Update) -> int | None:
+    """Extract message_thread_id untuk topic support."""
+    if hasattr(update.message, 'message_thread_id'):
+        return update.message.message_thread_id
+    return None
+
+
+# ==============================================================================
+# DIRECT EXECUTION HANDLER DECORATOR
+# ==============================================================================
+
+def direct_exec_handler(min_args: int = 0, max_args: int = None, parser_type: str = "shortcut"):
+    """Decorator untuk direct execution handlers.
+    
+    Args:
+        min_args: minimal argument yang diharapkan
+        max_args: maksimal arguments (None = unlimited)
+        parser_type: "shortcut" (space-separated) atau "label" (key: value per line)
+    
+    Decorated function harus return: (success, output_text_or_error, excel_bytes_or_none)
+    """
+    def decorator(func):
+        async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            text = update.message.text if update.message else ""
+            chat_id = update.effective_chat.id
+            thread_id = _thread_id_from_update(update)
+            
+            try:
+                # Parsing args berdasarkan type
+                if parser_type == "shortcut":
+                    success, args, error_msg = parse_shortcut_args(text, min_args, max_args)
+                    if not success:
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"❌ Format salah. {error_msg}\n\nGunakan: {text.split()[0]} {' '.join([f'[arg{i+1}]' for i in range(min_args)])}",
+                            message_thread_id=thread_id,
+                        )
+                        return
+                    result = await func(update, context, args)
+                else:
+                    # label format handled by func itself
+                    result = await func(update, context, text)
+                
+                if isinstance(result, tuple) and len(result) == 3:
+                    success, output, excel_bytes = result
+                else:
+                    success, output, excel_bytes = result, result, None
+                
+                if not success:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=output,  # error message
+                        parse_mode=ParseMode.HTML,
+                        message_thread_id=thread_id,
+                    )
+                else:
+                    if excel_bytes:
+                        from telegram import InputFile
+                        filename = f"output_{dt.datetime.now(TZ).strftime('%Y%m%d_%H%M%S')}.xlsx"
+                        await context.bot.send_document(
+                            chat_id=chat_id,
+                            document=InputFile(io.BytesIO(excel_bytes), filename=filename),
+                            caption=output or "Hasil eksekusi dilampirkan dalam file Excel",
+                            message_thread_id=thread_id,
+                            read_timeout=180,
+                            write_timeout=180,
+                        )
+                    else:
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=output,
+                            parse_mode=ParseMode.HTML,
+                            message_thread_id=thread_id,
+                        )
+            
+            except Exception as e:
+                logger.exception(f"Error di {func.__name__}: {e}")
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⚠️ Error: {html.escape(str(e))}",
+                    message_thread_id=thread_id,
+                )
+        
+        return wrapper
+    return decorator
+
+# ==============================================================================
 # KONFIGURASI FILE & LOGIKA SHIFT / ROUND-ROBIN / AUDIT LOG SERVICEDESK PLUS
 # ==============================================================================
 TECH_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "technicians.json")
@@ -709,14 +897,49 @@ def _extract_project_prefix(text: str):
     DELRES_CONFIRM,
     RELVOUCHER_INPUT,
     RELVOUCHER_CONFIRM,
-    CHECKSTOCK_INPUT,
-    CHECKSTOCK_CONFIRM,
-    CEKPROMO_INPUT,
-    CEKAWB_INPUT,
-    CEKAWB_QUERY_CONFIRM,
-    AWBJNE_INPUT,
+    LOG_ISSUE,
+    LOG_TIME,
+    LOG_DESC,
+    LOG_DATE,
+    LOG_CONFIRM,
+    LOG_BULK_CONFIRM,
+    EDIT_ISSUE,
+    PICK_ISSUE_FOR_EDIT,
+    PICK_WORKLOG_EDIT,
+    EDIT_TIME,
+    EDIT_DESC,
+    DELETE_ISSUE,
+    PICK_ISSUE_FOR_DELETE,
+    PICK_WORKLOG_DELETE,
+    CONFIRM_DELETE,
+    MYJIRA_EMAIL,
+    MYJIRA_TOKEN,
+    MYJIRA_CONFIRM,
+    RUN_ACTION_PARAM,
+    RUN_ACTION_CONFIRM,
+    ADD_GUIDE_TITLE,
+    ADD_GUIDE_KEYWORDS,
+    ADD_GUIDE_CONTENT,
+    ADD_GUIDE_ACTION_ASK,
+    ADD_GUIDE_ACTION_SCRIPT,
+    ADD_GUIDE_ACTION_FLAG,
+    ADD_GUIDE_ACTION_MODE,
+    ADD_GUIDE_ACTION_TYPE,
+    ADD_GUIDE_CONFIRM,
+    EDIT_GUIDE_PICK,
+    EDIT_GUIDE_MENU,
+    EDIT_GUIDE_TITLE,
+    EDIT_GUIDE_KEYWORDS,
+    EDIT_GUIDE_CONTENT,
+    EDIT_GUIDE_ACTION_ASK,
+    EDIT_GUIDE_ACTION_SCRIPT,
+    EDIT_GUIDE_ACTION_FLAG,
+    EDIT_GUIDE_ACTION_MODE,
+    EDIT_GUIDE_ACTION_TYPE,
+    DEL_GUIDE_PICK,
+    DEL_GUIDE_CONFIRM,
     UPDATESHIFT_UPLOAD,
-) = range(49)
+) = range(41)
 
 
 def _thread_id_from_update(update: Update):
@@ -5277,112 +5500,65 @@ def _parse_checkstock_text(text: str) -> dict:
 
 
 @restricted
-async def checkstock_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler /stock — mulai proses cek stock."""
-    context.user_data.clear()
-
-    # Cek apakah user langsung kirim parameter setelah command
-    parts = update.message.text.split(maxsplit=1)
+async def stock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Direct execution: /stock [sku] [source] [unit]
+    
+    Shortcut: /stock 8000044321 SS20 EA
+    Interactive: User types sku: ... | source: ...
+    Default unit: EA
+    """
+    text = update.message.text.strip()
+    chat_id = update.effective_chat.id
+    thread_id = _thread_id_from_update(update)
+    
+    # Try parse shortcut args first
+    parts = text.split(maxsplit=1)
+    data = None
+    
     if len(parts) > 1 and parts[1].strip():
-        # Coba parse langsung dari command, misal: /stock 8000044321 SS20
         args = parts[1].strip().split()
         if len(args) >= 2:
-            context.user_data["checkstock_data"] = {
+            data = {
                 "article_ids": [args[0]],
                 "source_ids": [args[1]],
                 "units": [args[2]] if len(args) > 2 else ["EA"],
             }
-            return await _checkstock_show_confirm(update, context)
-
-    await update.message.reply_text(
-        "<b>📦 Check Stock (OAA)</b>\n\n"
-        "Pilih salah satu cara input:\n\n"
-        "<b>1. Ketik langsung:</b>\n"
-        "<code>sku: 8000044321\n"
-        "source: SS20</code>\n\n"
-        "<b>2. Multiple SKU/Source:</b>\n"
-        "<code>sku: 8000044321, 8000044322\n"
-        "source: SS20, SS21</code>\n\n"
-        "<b>3. Shortcut:</b>\n"
-        "<code>/stock 8000044321 SS20</code>\n\n"
-        "Opsional tambahkan unit (default: EA):\n"
-        "<code>unit: PC</code>\n\n"
-        "Kirim sekarang, atau /cancel untuk batal.",
-        parse_mode=ParseMode.HTML,
-    )
-    return CHECKSTOCK_INPUT
-
-
-async def checkstock_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Terima input dari user untuk check stock."""
-    text = update.message.text.strip()
-    data = _parse_checkstock_text(text)
-
+    
     if not data:
+        # No shortcut args -> ask for input (interactive fallback)
         await update.message.reply_text(
-            "Format tidak dikenali. Pastikan minimal ada <b>sku</b> dan <b>source</b>:\n\n"
+            "<b>📦 Check Stock (OAA)</b>\n\n"
+            "<b>Ketik salah satu:</b>\n\n"
+            "<b>Label format (single):</b>\n"
             "<code>sku: 8000044321\n"
             "source: SS20</code>\n\n"
-            "Coba lagi atau /cancel untuk batal.",
+            "<b>Label format (multiple):</b>\n"
+            "<code>sku: 8000044321, 8000044322\n"
+            "source: SS20, SS21</code>\n\n"
+            "<b>Atau shortcut:</b>\n"
+            "<code>/stock 8000044321 SS20</code>",
             parse_mode=ParseMode.HTML,
         )
-        return CHECKSTOCK_INPUT
-
-    context.user_data["checkstock_data"] = data
-    return await _checkstock_show_confirm(update, context)
-
-
-async def _checkstock_show_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Tampilkan preview dan minta konfirmasi."""
-    data = context.user_data["checkstock_data"]
-    skus = ", ".join(data["article_ids"])
-    sources = ", ".join(data["source_ids"])
-    units = ", ".join(data["units"]) if data["units"] else "EA"
-
-    await update.message.reply_text(
-        f"<b>📦 Konfirmasi Check Stock</b>\n\n"
-        f"<b>SKU:</b> <code>{skus}</code>\n"
-        f"<b>Source:</b> <code>{sources}</code>\n"
-        f"<b>Unit:</b> <code>{units}</code>\n\n"
-        "Jalankan query sekarang?",
+        return
+    
+    # Execute directly (no confirmation step)
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"⏳ Mengecek stock SKU <code>{data['article_ids'][0]}</code> dari <code>{data['source_ids'][0]}</code>...",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✅ Cek Stock", callback_data="checkstock_yes"),
-                InlineKeyboardButton("❌ Batal", callback_data="checkstock_no"),
-            ]
-        ]),
+        message_thread_id=thread_id,
     )
-    return CHECKSTOCK_CONFIRM
-
-
-async def checkstock_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Konfirmasi dan eksekusi check stock via Python requests."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "checkstock_no":
-        await query.edit_message_text("❌ Dibatalkan.")
-        context.user_data.clear()
-        return ConversationHandler.END
-
-    data = context.user_data.get("checkstock_data")
-    if not data:
-        await query.edit_message_text("⚠️ Data tidak ditemukan. Coba ulang /stock.")
-        context.user_data.clear()
-        return ConversationHandler.END
-
-    await query.edit_message_text("⏳ Mengecek stock, mohon tunggu...")
-
+    
     try:
         import uuid
+        
         articles = []
         for i, article_id in enumerate(data["article_ids"]):
             unit_val = data["units"][i] if i < len(data["units"]) else (data["units"][0] if data["units"] else "EA")
             articles.append({"ARTICLE_ID": article_id, "UNIT": unit_val})
-
+        
         sources = [{"SOURCE_ID": s} for s in data["source_ids"]]
-
+        
         payload = {
             "DATA": {
                 "IDENTIFICATION": {
@@ -5396,7 +5572,7 @@ async def checkstock_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "SOURCES": sources
             }
         }
-
+        
         def _do_stock_request():
             import requests as req_lib
             resp = req_lib.post(
@@ -5411,29 +5587,38 @@ async def checkstock_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 timeout=30,
             )
             return resp.text
-
+        
         raw_output = await asyncio.to_thread(_do_stock_request)
         formatted = _format_stock_response(raw_output)
-
+        
         if len(formatted) > 3500:
-            formatted = formatted[:3500] + "\n... (output dipotong)"
-
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"✅ <b>Hasil Check Stock</b>\n\n<pre>{html.escape(formatted)}</pre>",
-            parse_mode=ParseMode.HTML,
-            message_thread_id=_thread_id_from_update(update),
-        )
-
+            # Ekspor ke Excel
+            excel_buffer = _build_log_excel_bytes(formatted, header="Stock Details")
+            filename = f"stock_{data['article_ids'][0]}_{dt.datetime.now(TZ).strftime('%Y%m%d_%H%M%S')}.xlsx"
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(excel_buffer, filename=filename),
+                caption="📦 Hasil Check Stock (Excel)",
+                message_thread_id=thread_id,
+                read_timeout=180,
+                write_timeout=180,
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"✅ <b>Hasil Check Stock</b>\n\n<pre>{html.escape(formatted)}</pre>",
+                parse_mode=ParseMode.HTML,
+                message_thread_id=thread_id,
+            )
+    
     except Exception as e:
+        logger.exception(f"Error check stock: {e}")
         await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"⚠️ Gagal menjalankan check stock:\n{html.escape(str(e))}",
-            message_thread_id=_thread_id_from_update(update),
+            chat_id=chat_id,
+            text=f"⚠️ Gagal cek stock: {html.escape(str(e))}",
+            message_thread_id=thread_id,
         )
 
-    context.user_data.clear()
-    return ConversationHandler.END
 
 
 def _format_stock_response(raw_output: str) -> str:
@@ -5633,107 +5818,278 @@ def _format_promo_response(data, sku: str, bucode: str) -> str:
 
 
 @restricted
-async def cekpromo_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler /promo — mulai proses cek promo."""
-    context.user_data.clear()
-
-    # Cek apakah user langsung kirim parameter setelah command
-    # Format shortcut: /promo 8100102377 AZ02
-    parts = update.message.text.split(maxsplit=1)
+async def promo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Direct execution: /promo [sku] [bucode] [channelid] [membergroup]
+    
+    Shortcut: /promo 8100102377 AZ02
+    Interactive: User types sku: ... | bucode: ...
+    Defaults: channelid=50, membergroup=00
+    """
+    text = update.message.text.strip()
+    chat_id = update.effective_chat.id
+    thread_id = _thread_id_from_update(update)
+    
+    # Try parse shortcut args first
+    parts = text.split(maxsplit=1)
+    data = None
+    
     if len(parts) > 1 and parts[1].strip():
         args = parts[1].strip().split()
         if len(args) >= 2:
             data = {
                 "sku": args[0],
                 "bucode": args[1],
+                "channelid": args[2] if len(args) > 2 else "50",
+                "membergroup": args[3] if len(args) > 3 else "00",
             }
-            if len(args) > 2:
-                data["channelid"] = args[2]
-            if len(args) > 3:
-                data["membergroup"] = args[3]
-            context.user_data["cekpromo_data"] = data
-            return await _cekpromo_execute(update, context)
-
-    await update.message.reply_text(
-        "<b>🏷 Cek Promo SRP Price</b>\n\n"
-        "Pilih salah satu cara input:\n\n"
-        "<b>1. Ketik langsung:</b>\n"
-        "<code>sku: 8100102377\n"
-        "bucode: AZ02</code>\n\n"
-        "<b>2. Dengan opsi tambahan:</b>\n"
-        "<code>sku: 8100102377\n"
-        "bucode: AZ02\n"
-        "channelid: 50\n"
-        "membergroup: 00</code>\n\n"
-        "<b>3. Shortcut:</b>\n"
-        "<code>/promo 8100102377 AZ02</code>\n\n"
-        "Default: channelid=50, membergroup=00\n\n"
-        "Kirim sekarang, atau /cancel untuk batal.",
-        parse_mode=ParseMode.HTML,
-    )
-    return CEKPROMO_INPUT
-
-
-async def cekpromo_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Terima input dari user untuk cek promo."""
-    text = update.message.text.strip()
-    data = _parse_cekpromo_text(text)
-
+    
     if not data:
+        # No shortcut args -> ask for input (interactive fallback, ONE step only)
         await update.message.reply_text(
-            "Format tidak dikenali. Minimal harus ada <b>sku</b> dan <b>bucode</b>:\n\n"
+            "<b>🏷 Cek Promo SRP Price</b>\n\n"
+            "<b>Ketik salah satu:</b>\n\n"
+            "<b>Label format:</b>\n"
             "<code>sku: 8100102377\n"
             "bucode: AZ02</code>\n\n"
-            "Coba lagi atau /cancel untuk batal.",
+            "<b>Atau shortcut:</b>\n"
+            "<code>/promo 8100102377 AZ02</code>\n\n"
+            "Default: channelid=50, membergroup=00",
             parse_mode=ParseMode.HTML,
         )
-        return CEKPROMO_INPUT
-
-    context.user_data["cekpromo_data"] = data
-    return await _cekpromo_execute(update, context)
-
-
-async def _cekpromo_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Langsung eksekusi (karena cuma read/query, tanpa konfirmasi)."""
-    data = context.user_data["cekpromo_data"]
+        return
+    
+    # Execute directly
     sku = data["sku"]
     bucode = data["bucode"]
     channelid = data.get("channelid", "50")
     membergroup = data.get("membergroup", "00")
-
-    await update.message.reply_text(
-        f"⏳ Mengecek promo SKU <code>{sku}</code> di BU <code>{bucode}</code>...",
+    
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"⏳ Mengecek promo SKU <code>{sku}</code> di BU <code>{bucode}</code>...",
         parse_mode=ParseMode.HTML,
+        message_thread_id=thread_id,
     )
-
+    
     try:
         raw_response = await asyncio.to_thread(
             _call_cekpromo_api, sku, bucode, channelid, membergroup
         )
-
-        # Coba parse JSON
+        
         try:
-            data = json.loads(raw_response)
-            formatted = _format_promo_response(data, sku, bucode)
+            resp_data = json.loads(raw_response)
+            formatted = _format_promo_response(resp_data, sku, bucode)
         except json.JSONDecodeError:
             formatted = raw_response
-
+        
         if len(formatted) > 3500:
-            formatted = formatted[:3500] + "\n... (output dipotong)"
-
-        await update.message.reply_text(
-            f"🏷 <b>Hasil Cek Promo</b>\n\n<pre>{html.escape(formatted)}</pre>",
-            parse_mode=ParseMode.HTML,
-        )
-
+            # Ekspor ke Excel
+            excel_buffer = _build_log_excel_bytes(formatted, header="Promo Details")
+            filename = f"promo_{sku}_{bucode}_{dt.datetime.now(TZ).strftime('%Y%m%d_%H%M%S')}.xlsx"
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(excel_buffer, filename=filename),
+                caption="🏷 Hasil Cek Promo (Excel)",
+                message_thread_id=thread_id,
+                read_timeout=180,
+                write_timeout=180,
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🏷 <b>Hasil Cek Promo</b>\n\n<pre>{html.escape(formatted)}</pre>",
+                parse_mode=ParseMode.HTML,
+                message_thread_id=thread_id,
+            )
+    
     except Exception as e:
-        await update.message.reply_text(
-            f"⚠️ Gagal cek promo:\n<code>{html.escape(str(e))}</code>",
-            parse_mode=ParseMode.HTML,
+        logger.exception(f"Error cek promo: {e}")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"⚠️ Gagal cek promo: {html.escape(str(e))}",
+            message_thread_id=thread_id,
         )
 
-    context.user_data.clear()
-    return ConversationHandler.END
+
+@restricted
+async def awb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Direct execution: /awb [ordernumber] [source]
+    
+    Shortcut: /awb 3301352973 IBOX
+    Interactive: User types ordernumber: ... | source: ...
+    """
+    text = update.message.text.strip()
+    chat_id = update.effective_chat.id
+    thread_id = _thread_id_from_update(update)
+    
+    # Try parse shortcut args first
+    parts = text.split(maxsplit=1)
+    data = None
+    
+    if len(parts) > 1 and parts[1].strip():
+        args = parts[1].strip().split()
+        if len(args) >= 2:
+            data = {
+                "ordernumber": args[0],
+                "source": args[1],
+            }
+    
+    if not data:
+        # No shortcut args -> ask for input
+        await update.message.reply_text(
+            "<b>📦 Cek AWB (OMS Tracking)</b>\n\n"
+            "<b>Ketik salah satu:</b>\n\n"
+            "<b>Label format:</b>\n"
+            "<code>ordernumber: 3301352973\n"
+            "source: IBOX</code>\n\n"
+            "<b>Atau shortcut:</b>\n"
+            "<code>/awb 3301352973 IBOX</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    
+    # Execute directly
+    ordernumber = data["ordernumber"]
+    source = data["source"]
+    
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"⏳ Mengecek order <code>{ordernumber}</code> dari <code>{source}</code>...",
+        parse_mode=ParseMode.HTML,
+        message_thread_id=thread_id,
+    )
+    
+    try:
+        raw_response = await asyncio.to_thread(
+            _call_cekawb_api, ordernumber, source
+        )
+        
+        try:
+            resp_data = json.loads(raw_response)
+            formatted = _format_awb_response(resp_data, ordernumber, source)
+        except json.JSONDecodeError:
+            formatted = raw_response
+        
+        if len(formatted) > 3500:
+            excel_buffer = _build_log_excel_bytes(formatted, header="AWB Details")
+            filename = f"awb_{ordernumber}_{dt.datetime.now(TZ).strftime('%Y%m%d_%H%M%S')}.xlsx"
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(excel_buffer, filename=filename),
+                caption="📦 Hasil Cek AWB (Excel)",
+                message_thread_id=thread_id,
+                read_timeout=180,
+                write_timeout=180,
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"📦 <b>Hasil Cek AWB</b>\n\n<pre>{html.escape(formatted)}</pre>",
+                parse_mode=ParseMode.HTML,
+                message_thread_id=thread_id,
+            )
+    
+    except Exception as e:
+        logger.exception(f"Error cek awb: {e}")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"⚠️ Gagal cek AWB: {html.escape(str(e))}",
+            message_thread_id=thread_id,
+        )
+
+
+@restricted
+async def awbjne_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Direct execution: /awbjne [ordernumber] [awb] [ordernumber2] [awb2] ...
+    
+    Shortcut (single): /awbjne 8402663858 0157352600237230
+    Shortcut (multiple): /awbjne 8402663858 0157352600237230 8402679862 0157352600240929
+    Interactive: User types ordernumber: ... | awb: ... (multi-item via blank lines)
+    """
+    text = update.message.text.strip()
+    chat_id = update.effective_chat.id
+    thread_id = _thread_id_from_update(update)
+    
+    # Try parse shortcut args first
+    parts = text.split(maxsplit=1)
+    items = []
+    
+    if len(parts) > 1 and parts[1].strip():
+        args = parts[1].strip().split()
+        # Group by pairs: (ordernumber, awb)
+        for i in range(0, len(args), 2):
+            if i + 1 < len(args):
+                items.append({
+                    "ordernumber": args[i],
+                    "awb": args[i + 1],
+                })
+    
+    if not items:
+        # No shortcut args -> ask for input
+        await update.message.reply_text(
+            "<b>📮 Cek AWB JNE (Tracking)</b>\n\n"
+            "<b>Ketik salah satu:</b>\n\n"
+            "<b>Label format (single):</b>\n"
+            "<code>ordernumber: 8402663858\n"
+            "awb: 0157352600237230</code>\n\n"
+            "<b>Label format (multiple, pisah dgn blank line):</b>\n"
+            "<code>ordernumber: 8402663858\n"
+            "awb: 0157352600237230\n"
+            "\n"
+            "ordernumber: 8402679862\n"
+            "awb: 0157352600240929</code>\n\n"
+            "<b>Atau shortcut (multiple):</b>\n"
+            "<code>/awbjne 8402663858 0157352600237230 8402679862 0157352600240929</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    
+    # Execute directly for each item
+    results = []
+    for item in items:
+        ordernumber = item["ordernumber"]
+        awb = item["awb"]
+        
+        try:
+            raw_response = await asyncio.to_thread(
+                _call_awbjne_api, ordernumber, awb
+            )
+            
+            try:
+                resp_data = json.loads(raw_response)
+                formatted = _format_awbjne_response(resp_data, ordernumber, awb)
+            except json.JSONDecodeError:
+                formatted = raw_response
+            
+            results.append(f"<b>Order {ordernumber}:</b>\n{formatted}")
+        
+        except Exception as e:
+            logger.exception(f"Error awbjne {ordernumber}: {e}")
+            results.append(f"<b>Order {ordernumber}:</b> ⚠️ Error: {html.escape(str(e))}")
+    
+    combined_output = "\n\n".join(results)
+    
+    if len(combined_output) > 3500:
+        excel_buffer = _build_log_excel_bytes(combined_output, header="JNE Tracking Details")
+        filename = f"awbjne_{dt.datetime.now(TZ).strftime('%Y%m%d_%H%M%S')}.xlsx"
+        await context.bot.send_document(
+            chat_id=chat_id,
+            document=InputFile(excel_buffer, filename=filename),
+            caption="📮 Hasil Cek AWB JNE (Excel)",
+            message_thread_id=thread_id,
+            read_timeout=180,
+            write_timeout=180,
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"📮 <b>Hasil Cek AWB JNE</b>\n\n{combined_output}",
+            parse_mode=ParseMode.HTML,
+            message_thread_id=thread_id,
+        )
+
+
+
 
 
 # ==============================================================================
@@ -5832,98 +6188,11 @@ def _format_awb_response(data, order_number: str, source: str) -> str:
     return "\n".join(lines)
 
 
-@restricted
-async def cekawb_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler /awb — mulai proses cek AWB/tracking."""
-    context.user_data.clear()
-
-    # Cek apakah user langsung kirim parameter: /awb 3301352973 IBOX
-    parts = update.message.text.split(maxsplit=1)
-    if len(parts) > 1 and parts[1].strip():
-        args = parts[1].strip().split()
-        if len(args) >= 2:
-            context.user_data["cekawb_data"] = {
-                "orderNumber": args[0],
-                "source": args[1].upper(),
-            }
-            return await _cekawb_execute(update, context)
-
-    await update.message.reply_text(
-        "<b>📦 Cek AWB / Tracking Order</b>\n\n"
-        "Pilih salah satu cara input:\n\n"
-        "<b>1. Ketik langsung:</b>\n"
-        "<code>ordernumber: 3301352973\n"
-        "source: IBOX</code>\n\n"
-        "<b>2. Shortcut:</b>\n"
-        "<code>/awb 3301352973 IBOX</code>\n\n"
-        "Kirim sekarang, atau /cancel untuk batal.",
-        parse_mode=ParseMode.HTML,
-    )
-    return CEKAWB_INPUT
-
-
-async def cekawb_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Terima input dari user untuk cek AWB."""
-    text = update.message.text.strip()
-    data = _parse_cekawb_text(text)
-
-    if not data:
-        await update.message.reply_text(
-            "Format tidak dikenali. Minimal harus ada <b>ordernumber</b> dan <b>source</b>:\n\n"
-            "<code>ordernumber: 3301352973\n"
-            "source: IBOX</code>\n\n"
-            "Coba lagi atau /cancel untuk batal.",
-            parse_mode=ParseMode.HTML,
-        )
-        return CEKAWB_INPUT
-
-    context.user_data["cekawb_data"] = data
-    return await _cekawb_execute(update, context)
-
-
-async def _cekawb_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Langsung eksekusi (query, tanpa konfirmasi)."""
-    data = context.user_data["cekawb_data"]
-    order_number = data["orderNumber"]
-    source = data["source"]
-
-    await update.message.reply_text(
-        f"⏳ Mengecek tracking order <code>{order_number}</code> ({source})...",
-        parse_mode=ParseMode.HTML,
-    )
-
-    try:
-        raw_response = await asyncio.to_thread(
-            _call_cekawb_api, order_number, source
-        )
-
-        try:
-            resp_data = json.loads(raw_response)
-            formatted = _format_awb_response(resp_data, order_number, source)
-        except json.JSONDecodeError:
-            formatted = raw_response
-
-        if len(formatted) > 3500:
-            formatted = formatted[:3500] + "\n... (output dipotong)"
-
-        await update.message.reply_text(
-            f"📦 <b>Hasil Cek AWB</b>\n\n<pre>{html.escape(formatted)}</pre>",
-            parse_mode=ParseMode.HTML,
-        )
-
-    except Exception as e:
-        await update.message.reply_text(
-            f"⚠️ Gagal cek AWB:\n<code>{html.escape(str(e))}</code>",
-            parse_mode=ParseMode.HTML,
-        )
-
-    context.user_data.clear()
-    return ConversationHandler.END
-
 
 # ==============================================================================
 # QUERY DATABASE (ADMINER VIA PLAYWRIGHT) - INTEGRATED FROM bot_core
 # ==============================================================================
+
 BOTCORE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "coreitops", "bot_core")
 
 
@@ -6471,120 +6740,6 @@ def _format_awbjne_response(data, order_number: str, awb: str) -> str:
             lines.append(f"  [{date}] {status_text}")
 
     return "\n".join(lines)
-
-
-@restricted
-async def awbjne_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler /awbjne — cek tracking AWB JNE (support multiple)."""
-    context.user_data.clear()
-
-    # Shortcut: /awbjne 8402663858 0157352600237230 8402679862 0157352600240929
-    parts = update.message.text.split(maxsplit=1)
-    if len(parts) > 1 and parts[1].strip():
-        arg_text = parts[1].strip()
-
-        # Coba parse sebagai label format dulu
-        items = _parse_awbjne_text(arg_text)
-
-        # Jika tidak match label format, coba parse sebagai pairs (ordernumber awb ordernumber awb ...)
-        if not items:
-            args = arg_text.split()
-            if len(args) >= 2 and len(args) % 2 == 0:
-                items = []
-                for i in range(0, len(args), 2):
-                    items.append({"order_number": args[i], "awb": args[i + 1]})
-            elif len(args) == 2:
-                items = [{"order_number": args[0], "awb": args[1]}]
-
-        if items:
-            context.user_data["awbjne_items"] = items
-            return await _awbjne_execute_multi(update, context)
-
-    await update.message.reply_text(
-        "<b>📦 Cek AWB JNE</b>\n\n"
-        "Pilih salah satu cara input:\n\n"
-        "<b>1. Single:</b>\n"
-        "<code>/awbjne 8402663858 0157352600237230</code>\n\n"
-        "<b>2. Multiple (shortcut):</b>\n"
-        "<code>/awbjne 8402663858 0157352600237230 8402679862 0157352600240929</code>\n\n"
-        "<b>3. Multiple (label):</b>\n"
-        "<code>ordernumber: 8402663858\n"
-        "awb: 0157352600237230\n\n"
-        "ordernumber: 8402679862\n"
-        "awb: 0157352600240929</code>\n\n"
-        "Kirim sekarang, atau /cancel untuk batal.",
-        parse_mode=ParseMode.HTML,
-    )
-    return AWBJNE_INPUT
-
-
-async def awbjne_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Terima input dari user untuk cek AWB JNE (support multiple)."""
-    text = update.message.text.strip()
-    items = _parse_awbjne_text(text)
-
-    if not items:
-        await update.message.reply_text(
-            "Format tidak dikenali. Minimal harus ada <b>ordernumber</b> dan <b>awb</b>:\n\n"
-            "<code>ordernumber: 8402663858\n"
-            "awb: 0157352600237230</code>\n\n"
-            "Untuk multiple, pisahkan dengan baris kosong.\n"
-            "Coba lagi atau /cancel untuk batal.",
-            parse_mode=ParseMode.HTML,
-        )
-        return AWBJNE_INPUT
-
-    context.user_data["awbjne_items"] = items
-    return await _awbjne_execute_multi(update, context)
-
-
-async def _awbjne_execute_multi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Eksekusi tracking JNE untuk satu atau banyak AWB."""
-    items = context.user_data.get("awbjne_items", [])
-
-    await update.message.reply_text(
-        f"⏳ Mengecek {len(items)} AWB JNE, mohon tunggu...",
-        parse_mode=ParseMode.HTML,
-    )
-
-    for item in items:
-        order_number = item["order_number"]
-        awb = item["awb"]
-
-        try:
-            raw_response = await asyncio.to_thread(_call_awbjne_api, order_number, awb)
-
-            try:
-                resp_data = json.loads(raw_response)
-                formatted = _format_awbjne_response(resp_data, order_number, awb)
-            except json.JSONDecodeError:
-                if "Cloudflare" in raw_response or "<!DOCTYPE" in raw_response:
-                    formatted = "⚠️ API diblok Cloudflare. Cookie mungkin expired.\nCoba lagi nanti atau update cookie di kode."
-                else:
-                    formatted = raw_response[:500]
-
-            if len(formatted) > 3500:
-                formatted = formatted[:3500] + "\n... (output dipotong)"
-
-            await update.message.reply_text(
-                f"📦 <b>Tracking JNE</b>\n\n<pre>{html.escape(formatted)}</pre>",
-                parse_mode=ParseMode.HTML,
-            )
-
-        except Exception as e:
-            await update.message.reply_text(
-                f"⚠️ Gagal cek AWB JNE ({awb}):\n<code>{html.escape(str(e))}</code>",
-                parse_mode=ParseMode.HTML,
-            )
-
-    context.user_data.clear()
-    return ConversationHandler.END
-
-
-# ==============================================================================
-# UPDATE JADWAL SHIFT VIA TELEGRAM
-# ==============================================================================
-SHIFT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jadwal_shift.xlsx")
 
 
 @restricted
@@ -7528,59 +7683,15 @@ def main():
     app.add_handler(relvoucher_conv)
 
     # ConversationHandler check stock
-    checkstock_conv = ConversationHandler(
-        entry_points=[CommandHandler("stock", checkstock_start)],
-        states={
-            CHECKSTOCK_INPUT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, checkstock_input),
-            ],
-            CHECKSTOCK_CONFIRM: [CallbackQueryHandler(checkstock_confirm, pattern="^checkstock_")],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False,
-    )
-    app.add_handler(checkstock_conv)
-    app.add_handler(CallbackQueryHandler(checkstock_confirm, pattern="^checkstock_"))
+    # REMOVED - now using direct execution stock_command
+
+    # Direct execution commands (no ConversationHandler needed)
+    app.add_handler(CommandHandler("stock", stock_command))
+    app.add_handler(CommandHandler("promo", promo_command))
+    app.add_handler(CommandHandler("awb", awb_command))
+    app.add_handler(CommandHandler("awbjne", awbjne_command))
+    
     app.add_handler(CallbackQueryHandler(delreservation_confirm, pattern="^delres_"))
-
-    # ConversationHandler cek promo
-    cekpromo_conv = ConversationHandler(
-        entry_points=[CommandHandler("promo", cekpromo_start)],
-        states={
-            CEKPROMO_INPUT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cekpromo_input),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False,
-    )
-    app.add_handler(cekpromo_conv)
-
-    # ConversationHandler cek AWB
-    cekawb_conv = ConversationHandler(
-        entry_points=[CommandHandler("awb", cekawb_start)],
-        states={
-            CEKAWB_INPUT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cekawb_input),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False,
-    )
-    app.add_handler(cekawb_conv)
-
-    # ConversationHandler AWB JNE
-    awbjne_conv = ConversationHandler(
-        entry_points=[CommandHandler("awbjne", awbjne_start)],
-        states={
-            AWBJNE_INPUT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, awbjne_input),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False,
-    )
-    app.add_handler(awbjne_conv)
 
     # ConversationHandler update shift
     updateshift_conv = ConversationHandler(
