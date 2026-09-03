@@ -133,6 +133,16 @@ class DatabaseConnector:
                             logger.info(f"Trying SQL URL: {sql_url}")
                             page.goto(sql_url, wait_until='load', timeout=15000)
                             
+                            # Log page info for debugging
+                            page_title = page.title()
+                            page_url = page.url
+                            logger.info(f"Page title: {page_title}, URL: {page_url}")
+                            
+                            # Check if we got redirected to login (common issue)
+                            if 'login' in page_title.lower() or 'auth' in page_title.lower():
+                                logger.warning(f"Seems we got redirected to login page. Title: {page_title}")
+                                continue
+                            
                             # Wait for textarea with longer timeout and allow DOM mutations
                             try:
                                 query_textarea = page.locator("textarea[name='query']")
@@ -161,6 +171,7 @@ class DatabaseConnector:
                         # Log page content for debugging
                         page_content = page.content()
                         logger.error(f"Could not find SQL page. Current URL: {page.url}")
+                        logger.error(f"Page title: {page.title()}")
                         logger.error(f"Page length: {len(page_content)}")
                         
                         # Save page content to file for analysis
@@ -180,6 +191,10 @@ class DatabaseConnector:
                         for i in range(all_textareas.count()):
                             ta_name = all_textareas.nth(i).get_attribute("name")
                             logger.error(f"Textarea {i}: name={ta_name}")
+                        
+                        # Try to find any input or form elements
+                        all_inputs = page.locator("input[type='text'], input[type='submit'], textarea")
+                        logger.error(f"Found {all_inputs.count()} form elements total")
                         
                         return False, [], "Query textarea tidak ditemukan di Adminer - SQL page tidak accessible"
 
