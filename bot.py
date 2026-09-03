@@ -7761,13 +7761,6 @@ async def _init_sql_loader_scheduler(context: ContextTypes.DEFAULT_TYPE):
         registered_count = dynamic_scheduler.register_jobs_from_config()
         logger.info(f"DynamicScheduler started: {registered_count} jobs registered")
 
-        await _broadcast_notify(
-            context,
-            f"SQLLoader & DynamicScheduler initialized:\n"
-            f"• SQL queries loaded: {sql_count}\n"
-            f"• Scheduled jobs: {registered_count}"
-        )
-
     except Exception as e:
         logger.exception(f"Error initializing SQL loader scheduler: {e}")
 
