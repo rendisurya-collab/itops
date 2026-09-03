@@ -7939,20 +7939,30 @@ async def querydebug_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     try:
         from pathlib import Path
+        import os
         
         debug_lines = ["DEBUG INFO - SQLLoader\n"]
         
-        # Check SQL_FOLDER_PATH dari config
-        sql_folder_path = config.SQL_FOLDER_PATH if hasattr(config, 'SQL_FOLDER_PATH') else None
-        debug_lines.append(f"SQL_FOLDER_PATH from config: {sql_folder_path}")
+        # Check raw env var
+        raw_env = os.getenv("SQL_FOLDER_PATH", "NOT_SET")
+        debug_lines.append(f"Raw os.getenv('SQL_FOLDER_PATH'): {raw_env}")
         
-        if not sql_folder_path:
-            debug_lines.append("❌ SQL_FOLDER_PATH tidak dikonfigurasi")
+        # Check SQL_FOLDER_PATH dari config module
+        sql_folder_path = config.SQL_FOLDER_PATH if hasattr(config, 'SQL_FOLDER_PATH') else None
+        debug_lines.append(f"config.SQL_FOLDER_PATH: {sql_folder_path}")
+        
+        if not sql_folder_path or sql_folder_path == "NOT_SET":
+            debug_lines.append("❌ SQL_FOLDER_PATH tidak dikonfigurasi di .env")
             await update.message.reply_text("\n".join(debug_lines))
             return
         
+        # Strip whitespace dan resolve path
+        sql_folder_path = str(sql_folder_path).strip()
+        debug_lines.append(f"After strip: {sql_folder_path}")
+        
         # Check folder exists
-        folder = Path(sql_folder_path)
+        folder = Path(sql_folder_path).resolve()
+        debug_lines.append(f"Resolved path: {folder}")
         debug_lines.append(f"Folder exists: {folder.exists()}")
         debug_lines.append(f"Is directory: {folder.is_dir()}")
         
@@ -7980,6 +7990,17 @@ async def querydebug_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     debug_lines.append(f"❌ Error reading config: {e}")
         else:
             debug_lines.append(f"❌ Folder tidak ditemukan atau bukan directory")
+            # Try to list parent directory
+            parent = folder.parent
+            debug_lines.append(f"\nParent directory: {parent}")
+            debug_lines.append(f"Parent exists: {parent.exists()}")
+            if parent.exists():
+                debug_lines.append(f"Contents of {parent}:")
+                try:
+                    for item in parent.iterdir():
+                        debug_lines.append(f"  - {item.name} {'(dir)' if item.is_dir() else ''}")
+                except Exception as e:
+                    debug_lines.append(f"  Error listing: {e}")
         
         # Check SQLLoader state
         if sql_loader:
