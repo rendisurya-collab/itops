@@ -7809,6 +7809,129 @@ async def _send_query_notification(
         logger.error(f"Error sending query notification: {e}")
 
 
+# ============ Admin Commands for SQLLoader & DynamicScheduler ============
+
+@restricted
+async def querylist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List semua registered queries dan jobs."""
+    global dynamic_scheduler, sql_loader
+
+    if not sql_loader or not dynamic_scheduler:
+        await update.message.reply_text("SQLLoader & DynamicScheduler belum initialized")
+        return
+
+    try:
+        # Get all queries
+        all_queries = sql_loader.get_all_queries()
+        config = sql_loader.get_config()
+
+        if not all_queries:
+            await update.message.reply_text("Tidak ada query yang tersimpan")
+            return
+
+        # Build response
+        lines = ["QUERY LIST & JOBS STATUS\n"]
+
+        for query_name in sorted(all_queries.keys()):
+            query_content = all_queries[query_name]
+            config_entry = config.get(query_name, {})
+            enabled = config_entry.get("enabled", False)
+
+            status = "✓ ENABLED" if enabled else "✗ DISABLED"
+            schedule_type = config_entry.get("schedule_type", "N/A")
+
+            lines.append(f"\n{query_name}")
+            lines.append(f"  Status: {status}")
+            lines.append(f"  Type: {schedule_type}")
+            lines.append(f"  Size: {len(query_content)} chars")
+
+            if enabled:
+                if schedule_type == "cron":
+                    hour = config_entry.get("hour", 0)
+                    minute = config_entry.get("minute", 0)
+                    lines.append(f"  Schedule: {hour:02d}:{minute:02d} (cron)")
+                elif schedule_type == "interval":
+                    interval = config_entry.get("interval_minutes", 0)
+                    lines.append(f"  Schedule: Every {interval} minutes")
+
+        # Get registered jobs
+        jobs = dynamic_scheduler.get_registered_jobs()
+        lines.append(f"\n\nREGISTERED JOBS ({len(jobs)})")
+        for job in jobs:
+            lines.append(f"\n  {job['name']}")
+            lines.append(f"  Trigger: {job['trigger']}")
+
+        text = "\n".join(lines)
+        await update.message.reply_text(text)
+
+    except Exception as e:
+        logger.exception(f"Error in querylist_command: {e}")
+        await update.message.reply_text(f"Error: {str(e)}")
+
+
+@restricted
+async def queryreload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reload SQL files & config, re-register jobs."""
+    global dynamic_scheduler
+
+    if not dynamic_scheduler:
+        await update.message.reply_text("DynamicScheduler belum initialized")
+        return
+
+    try:
+        await update.message.reply_text("Reloading SQL files & config...")
+
+        registered = dynamic_scheduler.reload_and_reregister()
+
+        jobs = dynamic_scheduler.get_registered_jobs()
+        text = (
+            f"Reload completed!\n\n"
+            f"Registered jobs: {registered}\n"
+            f"Total jobs: {len(jobs)}"
+        )
+        await update.message.reply_text(text)
+
+    except Exception as e:
+        logger.exception(f"Error in queryreload_command: {e}")
+        await update.message.reply_text(f"Error: {str(e)}")
+
+
+@restricted
+async def querystatus_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check SQLLoader & DynamicScheduler status."""
+    global sql_loader, dynamic_scheduler
+
+    try:
+        status_lines = ["SQLLOADER & DYNAMICSCHEDULER STATUS\n"]
+
+        if sql_loader:
+            queries = sql_loader.get_all_queries()
+            config = sql_loader.get_config()
+            enabled_count = len(sql_loader.list_enabled_queries())
+            status_lines.append(f"SQLLoader: ✓ ACTIVE")
+            status_lines.append(f"  Queries loaded: {len(queries)}")
+            status_lines.append(f"  Enabled queries: {enabled_count}")
+            status_lines.append(f"  Config entries: {len(config)}")
+        else:
+            status_lines.append(f"SQLLoader: ✗ NOT INITIALIZED")
+
+        if dynamic_scheduler and dynamic_scheduler.scheduler:
+            jobs = dynamic_scheduler.get_registered_jobs()
+            running = dynamic_scheduler.scheduler.running if hasattr(dynamic_scheduler.scheduler, 'running') else False
+            status_lines.append(f"\nDynamicScheduler: ✓ ACTIVE")
+            status_lines.append(f"  Running: {running}")
+            status_lines.append(f"  Registered jobs: {len(jobs)}")
+        else:
+            status_lines.append(f"\nDynamicScheduler: ✗ NOT INITIALIZED")
+
+        text = "\n".join(status_lines)
+        await update.message.reply_text(text)
+
+    except Exception as e:
+        logger.exception(f"Error in querystatus_command: {e}")
+        await update.message.reply_text(f"Error: {str(e)}")
+
+
 # ---------------- main ----------------
 
 def main():
@@ -8083,6 +8206,11 @@ def main():
     # Eraspace shipping tracking PSD (awbpsd)
     app.add_handler(CommandHandler("awbpsd", awbpsd_command))
     app.add_handler(CommandHandler("awbpsddebug", awbpsd_debug_command))
+
+    # SQLLoader & DynamicScheduler admin commands
+    app.add_handler(CommandHandler("querylist", querylist_command))
+    app.add_handler(CommandHandler("queryreload", queryreload_command))
+    app.add_handler(CommandHandler("querystatus", querystatus_command))
 
     # Knowledge Base / Bank Data commands
     app.add_handler(CommandHandler("tanyabot", tanya_command))
