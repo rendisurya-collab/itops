@@ -14,6 +14,13 @@
     "telegram_chat_id": "YOUR_CHAT_ID",
     "description": "Sync stock setiap 60 menit"
   },
+  "status_need_validate": {
+    "enabled": true,
+    "schedule_type": "interval",
+    "interval_minutes": 30,
+    "telegram_chat_id": "",
+    "description": "Check status yang perlu di-validate"
+  },
   "_example_notes": {
     "enabled": false,
     "schedule_type": "notes",
