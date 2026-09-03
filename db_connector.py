@@ -7,8 +7,32 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import os
+import subprocess
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_playwright_browsers():
+    """
+    Ensure Playwright browsers are installed.
+    Run once at startup to install chromium if needed.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        logger.info("Playwright browsers already available")
+    except Exception as e:
+        logger.warning(f"Playwright browsers not found, installing: {e}")
+        try:
+            subprocess.run(
+                ["playwright", "install", "chromium"],
+                check=True,
+                capture_output=True,
+                timeout=300
+            )
+            logger.info("Playwright chromium installed successfully")
+        except Exception as install_error:
+            logger.error(f"Failed to install Playwright browsers: {install_error}")
+            raise
 
 
 class DatabaseConnector:
