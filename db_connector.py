@@ -92,6 +92,7 @@ class DatabaseConnector:
 
                 try:
                     # Login to Adminer
+                    logger.info(f"Navigating to Adminer: {adm['url']}")
                     page.goto(adm['url'], wait_until='networkidle', timeout=30000)
 
                     driver_select = page.locator("select[name='auth[driver]']")
@@ -109,6 +110,7 @@ class DatabaseConnector:
                     if db_input.count() > 0:
                         db_input.fill(adm['db'])
 
+                    logger.info("Submitting login form...")
                     page.click("input[type='submit']")
                     page.wait_for_load_state('networkidle', timeout=30000)
 
@@ -116,16 +118,42 @@ class DatabaseConnector:
                         err_txt = page.locator('div.error').first.text_content()
                         return False, [], f"Adminer login error: {err_txt.strip()}"
 
-                    # Execute query
-                    # Navigate to SQL query page
-                    page.goto(adm['url'] + '?sql=', wait_until='networkidle', timeout=30000)
+                    logger.info(f"Login successful, navigating to SQL page...")
+                    # Execute query - navigate to SQL query page
+                    # Try multiple possible URLs for SQL page
+                    sql_urls = [
+                        adm['url'] + '?sql=',
+                        adm['url'].rstrip('/') + '/?sql=',
+                        adm['url'].rstrip('/') + '/?action=sql',
+                    ]
+                    
+                    page_loaded = False
+                    for sql_url in sql_urls:
+                        try:
+                            logger.info(f"Trying SQL URL: {sql_url}")
+                            page.goto(sql_url, wait_until='networkidle', timeout=15000)
+                            
+                            # Check if textarea exists
+                            query_textarea = page.locator("textarea[name='query']")
+                            if query_textarea.count() > 0:
+                                logger.info(f"Found query textarea at {sql_url}")
+                                page_loaded = True
+                                break
+                        except Exception as e:
+                            logger.warning(f"SQL URL {sql_url} failed: {e}")
+                            continue
+                    
+                    if not page_loaded:
+                        # Log page content for debugging
+                        page_content = page.content()
+                        logger.error(f"Could not find SQL page. Current URL: {page.url}")
+                        logger.error(f"Page length: {len(page_content)}")
+                        return False, [], "Query textarea tidak ditemukan di Adminer - SQL page tidak accessible"
 
                     # Fill query
                     query_textarea = page.locator("textarea[name='query']")
-                    if query_textarea.count() == 0:
-                        return False, [], "Query textarea tidak ditemukan di Adminer"
-
                     query_textarea.fill(query)
+                    logger.info(f"Query filled, executing...")
 
                     # Execute
                     page.click("input[type='submit']")
@@ -159,7 +187,7 @@ class DatabaseConnector:
 
                 except Exception as e:
                     error_msg = f"Query execution error: {str(e)}"
-                    logger.error(error_msg)
+                    logger.error(error_msg, exc_info=True)
                     return False, [], error_msg
                 finally:
                     try:
@@ -171,7 +199,7 @@ class DatabaseConnector:
 
         except Exception as e:
             error_msg = f"Database connection error: {str(e)}"
-            logger.error(error_msg)
+            logger.error(error_msg, exc_info=True)
             return False, [], error_msg
 
     def get_database_for_query(self, query_name: str) -> Optional[str]:
