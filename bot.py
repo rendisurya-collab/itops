@@ -7726,9 +7726,10 @@ async def _init_sql_loader_scheduler(context: ContextTypes.DEFAULT_TYPE):
         config_loaded = sql_loader.load_config()
         logger.info(f"SQLLoader initialized: {sql_count} queries, config_loaded={config_loaded}")
 
-        # Initialize QueryExecutor (dengan db_connection nanti bisa diset dari SDP/Jira)
-        query_executor = QueryExecutor(db_connection=None)
-        logger.info("QueryExecutor initialized")
+        # Initialize QueryExecutor dengan SDP connection (atau Jira jika SDP tidak tersedia)
+        db_connection = sdp if sdp else jira
+        query_executor = QueryExecutor(db_connection=db_connection)
+        logger.info(f"QueryExecutor initialized dengan connection: {type(db_connection).__name__}")
 
         # Initialize DynamicScheduler
         dynamic_scheduler = DynamicScheduler(
