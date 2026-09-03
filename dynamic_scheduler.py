@@ -3,8 +3,8 @@ Dynamic Scheduler module untuk auto-register dan execute query jobs dengan APSch
 """
 import logging
 import asyncio
+import datetime as dt
 from typing import Dict, Callable, Optional
-from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -119,7 +119,18 @@ class DynamicScheduler:
             if not chat_id:
                 config_entry = self.sql_loader.get_config_entry(query_name)
                 if config_entry:
-                    chat_id = config_entry.get("telegram_chat_id")
+                    chat_id = config_entry.get("telegram_chat_id", "").strip()
+
+            # Fallback to default NOTIFY_TARGETS jika chat_id masih kosong
+            if not chat_id:
+                from config import notify_targets
+                targets = notify_targets()
+                if targets:
+                    # Ambil target pertama (chat_id, thread_id)
+                    chat_id, thread_id = targets[0]
+                else:
+                    logger.warning(f"Tidak ada chat_id di config dan NOTIFY_TARGETS kosong")
+                    return
 
             # Execute query di background thread
             success, rows, error = await asyncio.to_thread(
@@ -152,7 +163,7 @@ class DynamicScheduler:
                         chat_id=chat_id,
                         text=f"Query: {query_name}\n\n{text_message}",
                         excel_bytes=excel_bytes,
-                        filename=f"{query_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                        filename=f"{query_name}_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
                     )
                     logger.info(f"Notification sent untuk job: {query_name}")
                 except Exception as e:
