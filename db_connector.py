@@ -131,14 +131,28 @@ class DatabaseConnector:
                     for sql_url in sql_urls:
                         try:
                             logger.info(f"Trying SQL URL: {sql_url}")
-                            page.goto(sql_url, wait_until='networkidle', timeout=15000)
+                            page.goto(sql_url, wait_until='load', timeout=15000)
                             
-                            # Check if textarea exists
-                            query_textarea = page.locator("textarea[name='query']")
-                            if query_textarea.count() > 0:
+                            # Wait for textarea with longer timeout and allow DOM mutations
+                            try:
+                                query_textarea = page.locator("textarea[name='query']")
+                                # Wait for it to be visible
+                                query_textarea.first.wait_for(timeout=5000, state='visible')
                                 logger.info(f"Found query textarea at {sql_url}")
                                 page_loaded = True
                                 break
+                            except Exception as wait_error:
+                                logger.warning(f"Textarea not visible at {sql_url}: {wait_error}")
+                                
+                                # Try generic textarea selector
+                                all_textareas = page.locator("textarea")
+                                logger.info(f"Found {all_textareas.count()} textareas (trying generic selector)")
+                                if all_textareas.count() > 0:
+                                    # Found textarea with generic selector
+                                    logger.info("Using first textarea found")
+                                    page_loaded = True
+                                    break
+                                    
                         except Exception as e:
                             logger.warning(f"SQL URL {sql_url} failed: {e}")
                             continue
@@ -171,11 +185,16 @@ class DatabaseConnector:
 
                     # Fill query
                     query_textarea = page.locator("textarea[name='query']")
+                    if query_textarea.count() == 0:
+                        # Try generic textarea selector
+                        query_textarea = page.locator("textarea").first
+                    
                     query_textarea.fill(query)
                     logger.info(f"Query filled, executing...")
 
-                    # Execute
-                    page.click("input[type='submit']")
+                    # Execute - find submit button
+                    submit_btn = page.locator("input[type='submit']").first
+                    submit_btn.click()
                     page.wait_for_load_state('networkidle', timeout=60000)
 
                     # Parse results
