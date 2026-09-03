@@ -7716,10 +7716,6 @@ async def _init_sql_loader_scheduler(context: ContextTypes.DEFAULT_TYPE):
     global sql_loader, query_executor, dynamic_scheduler
 
     try:
-        # Ensure Playwright browsers are installed
-        from db_connector import ensure_playwright_browsers
-        ensure_playwright_browsers()
-
         sql_folder_path = config.SQL_FOLDER_PATH if hasattr(config, 'SQL_FOLDER_PATH') else None
         if not sql_folder_path:
             logger.warning("SQL_FOLDER_PATH tidak dikonfigurasi di .env")
