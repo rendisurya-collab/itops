@@ -40,6 +40,7 @@ from webhook_sync import parse_synctowebhook_text, sync_stock_to_webhook, auto_f
 from sql_loader import SQLLoader
 from query_executor import QueryExecutor
 from dynamic_scheduler import DynamicScheduler
+from db_connector import DatabaseConnector
 
 # Sembunyikan peringatan PTBUserWarning agar terminal bersih
 warnings.filterwarnings("ignore", category=PTBUserWarning)
@@ -7726,8 +7727,17 @@ async def _init_sql_loader_scheduler(context: ContextTypes.DEFAULT_TYPE):
         config_loaded = sql_loader.load_config()
         logger.info(f"SQLLoader initialized: {sql_count} queries, config_loaded={config_loaded}")
 
-        # Initialize QueryExecutor dengan SDP connection (atau Jira jika SDP tidak tersedia)
-        db_connection = sdp if sdp else jira
+        # Initialize DatabaseConnector dari config.json
+        db_config_file = r"./tools/coreitops/bot_core/config.json"
+        db_connector = DatabaseConnector(db_config_file)
+        
+        if not db_connector.config:
+            logger.warning("DatabaseConnector config empty, falling back to SDP/Jira")
+            db_connection = sdp if sdp else jira
+        else:
+            db_connection = db_connector
+        
+        # Initialize QueryExecutor dengan database connection
         query_executor = QueryExecutor(db_connection=db_connection)
         logger.info(f"QueryExecutor initialized dengan connection: {type(db_connection).__name__}")
 

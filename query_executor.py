@@ -51,9 +51,22 @@ class QueryExecutor:
             if not self.db_connection:
                 return False, [], "Database connection belum dikonfigurasi"
 
-            # Execute query melalui connection object
-            # Asumsi: connection punya method execute(query) yang return list of tuples
-            rows = self.db_connection.execute(query)
+            # Check apakah db_connection adalah DatabaseConnector atau legacy connection
+            from db_connector import DatabaseConnector
+            
+            if isinstance(self.db_connection, DatabaseConnector):
+                # Use DatabaseConnector (support multiple databases)
+                # Untuk sekarang, ambil database pertama yang tersedia
+                databases = self.db_connection.config.get('databases', [])
+                if not databases:
+                    return False, [], "Tidak ada database di config"
+                
+                db_name = databases[0].get('name')
+                success, rows, error = self.db_connection.execute_query(db_name, query)
+                return success, rows, error
+            else:
+                # Legacy: assume connection punya method execute()
+                rows = self.db_connection.execute(query)
 
             if not rows:
                 return True, [], None  # Success tapi empty result
