@@ -30,12 +30,13 @@ class QueryExecutor:
         """
         self.db_connection = db_connection
 
-    def execute_select(self, query: str) -> Tuple[bool, list, str]:
+    def execute_select(self, query: str, db_name: str | None = None) -> Tuple[bool, list, str]:
         """
         Execute query SELECT.
 
         Args:
             query: SQL query string (harus SELECT)
+            db_name: Database name (opsional, untuk DatabaseConnector)
 
         Return:
             (success: bool, rows: list of tuples, error: str)
@@ -56,12 +57,13 @@ class QueryExecutor:
             
             if isinstance(self.db_connection, DatabaseConnector):
                 # Use DatabaseConnector (support multiple databases)
-                # Untuk sekarang, ambil database pertama yang tersedia
-                databases = self.db_connection.config.get('databases', [])
-                if not databases:
-                    return False, [], "Tidak ada database di config"
+                if not db_name:
+                    # Fallback: ambil database pertama
+                    databases = self.db_connection.config.get('databases', [])
+                    if not databases:
+                        return False, [], "Tidak ada database di config"
+                    db_name = databases[0].get('name')
                 
-                db_name = databases[0].get('name')
                 success, rows, error = self.db_connection.execute_query(db_name, query)
                 return success, rows, error
             else:

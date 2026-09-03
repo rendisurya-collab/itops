@@ -92,7 +92,7 @@ class DynamicScheduler:
             logger.error(f"Error stopping scheduler: {e}")
             return False
 
-    async def _execute_query_job(self, query_name: str, chat_id: str | None = None):
+    async def _execute_query_job(self, query_name: str, chat_id: str | None = None, db_name: str | None = None):
         """
         Execute query job dan kirim notifikasi ke Telegram.
 
@@ -105,6 +105,7 @@ class DynamicScheduler:
         Args:
             query_name: Nama query
             chat_id: Telegram chat ID untuk notifikasi (optional, ambil dari config kalau None)
+            db_name: Database name (optional, ambil dari config kalau None)
         """
         try:
             # Get query
@@ -115,11 +116,16 @@ class DynamicScheduler:
 
             logger.info(f"Executing job: {query_name}")
 
+            # Get config entry
+            config_entry = self.sql_loader.get_config_entry(query_name)
+            
             # Get chat_id dari config jika tidak diberikan
-            if not chat_id:
-                config_entry = self.sql_loader.get_config_entry(query_name)
-                if config_entry:
-                    chat_id = config_entry.get("telegram_chat_id", "").strip()
+            if not chat_id and config_entry:
+                chat_id = config_entry.get("telegram_chat_id", "").strip()
+
+            # Get database name dari config jika tidak diberikan
+            if not db_name and config_entry:
+                db_name = config_entry.get("database", "").strip()
 
             # Fallback to default NOTIFY_TARGETS jika chat_id masih kosong
             if not chat_id:
@@ -132,9 +138,9 @@ class DynamicScheduler:
                     logger.warning(f"Tidak ada chat_id di config dan NOTIFY_TARGETS kosong")
                     return
 
-            # Execute query di background thread
+            # Execute query di background thread (pass db_name ke executor)
             success, rows, error = await asyncio.to_thread(
-                self.query_executor.execute_select, query
+                self.query_executor.execute_select, query, db_name
             )
 
             if not success:

@@ -5,6 +5,7 @@
     "hour": 15,
     "minute": 0,
     "telegram_chat_id": "YOUR_CHAT_ID",
+    "database": "apis_2022",
     "description": "Validation harian jam 15:00 WIB"
   },
   "sync_stock_hourly": {
@@ -12,6 +13,7 @@
     "schedule_type": "interval",
     "interval_minutes": 60,
     "telegram_chat_id": "",
+    "database": "apis_2022",
     "description": "Sync stock setiap 60 menit"
   },
   "status_need_validate": {
@@ -19,6 +21,7 @@
     "schedule_type": "interval",
     "interval_minutes": 3,
     "telegram_chat_id": "",
+    "database": "apis_2022",
     "description": "Check status yang perlu di-validate"
   },
   "status_erpi": {
@@ -26,11 +29,12 @@
     "schedule_type": "interval",
     "interval_minutes": 5,
     "telegram_chat_id": "",
-    "description": "Check status yang perlu di-validate"
+    "database": "sap_middleware_live",
+    "description": "Check status ERPI dari SAP"
   },
   "_example_notes": {
     "enabled": false,
     "schedule_type": "notes",
-    "description": "Format: schedule_type bisa 'cron' atau 'interval'. Untuk 'cron' gunakan hour/minute. Untuk 'interval' gunakan interval_minutes. telegram_chat_id bisa dikosongkan, maka akan pakai default dari NOTIFY_TARGETS di config.py"
+    "description": "Format: schedule_type bisa 'cron' atau 'interval'. Untuk 'cron' gunakan hour/minute. Untuk 'interval' gunakan interval_minutes. database: nama database dari config (apis_2022 atau sap_middleware_live). telegram_chat_id bisa dikosongkan."
   }
 }
