@@ -16,7 +16,7 @@
   },
   "status_need_validate": {
     "enabled": true,
-    "schedule_type": "cron",
+    "schedule_type": "interval",
     "interval_minutes": 3,
     "telegram_chat_id": "",
     "description": "Check status yang perlu di-validate"
