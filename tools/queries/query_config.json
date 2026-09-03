@@ -26,8 +26,9 @@
   },
   "status_erpi": {
     "enabled": true,
-    "schedule_type": "interval",
-    "interval_minutes": 5,
+    "schedule_type": "cron",
+    "hour": 23,
+    "minute": 5,
     "telegram_chat_id": "",
     "database": "sap_middleware_live",
     "description": "Check status ERPI dari SAP"
