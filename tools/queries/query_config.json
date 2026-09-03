@@ -1,0 +1,22 @@
+{
+  "daily_validation": {
+    "enabled": true,
+    "schedule_type": "cron",
+    "hour": 15,
+    "minute": 0,
+    "telegram_chat_id": "YOUR_CHAT_ID",
+    "description": "Validation harian jam 15:00 WIB"
+  },
+  "sync_stock_hourly": {
+    "enabled": true,
+    "schedule_type": "interval",
+    "interval_minutes": 60,
+    "telegram_chat_id": "YOUR_CHAT_ID",
+    "description": "Sync stock setiap 60 menit"
+  },
+  "_example_notes": {
+    "enabled": false,
+    "schedule_type": "notes",
+    "description": "Format: schedule_type bisa 'cron' atau 'interval'. Untuk 'cron' gunakan hour/minute. Untuk 'interval' gunakan interval_minutes. telegram_chat_id bisa dikosongkan, maka akan pakai default dari NOTIFY_TARGETS di config.py"
+  }
+}

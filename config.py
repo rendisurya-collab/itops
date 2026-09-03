@@ -224,3 +224,7 @@ WEBHOOK_STOCK_COOKIE = os.getenv("WEBHOOK_STOCK_COOKIE", "")
 def webhook_stock_configured() -> bool:
     """Check jika webhook stock sudah dikonfigurasi."""
     return bool(WEBHOOK_STOCK_URL)
+
+# ==== SQLLoader & Dynamic Scheduler ====
+# Path folder untuk menyimpan file .sql yang akan dijalankan secara otomatis
+SQL_FOLDER_PATH = os.getenv("SQL_FOLDER_PATH", "D:\\mybot\\tools\\queries")

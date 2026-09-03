@@ -1,0 +1,10 @@
+curl --location 'https://jeanne.eraspace.com/shippings/v2/tracking/order/oms/psd' \
+--header 'authorization: Basic c2hpcHBpbmdiYXNpYzo3NmNkNDJlZTQzZTUxNTIzZTAzNTVjZDE3NTMxY2ZjZjQxYjE2MWNmZDJjNTgwNDJkZjkxZTVmODU1MDQwYTQx' \
+--header 'x-source: eraspace' \
+--header 'x-platform: omsservice' \
+--header 'Content-Type: application/json' \
+--header 'Cookie: __cf_bm=vrSqXabME9kYuhDhOmv3XXMW10Sd0j3QAQB7XnVIzkU-1741320736-1.0.1.1-wPCTBXqpIGF1OPCfBqfaHgFbZ.Xmv0BmpQOopNT.AEvz_B.P8HaO0fU2i6gzRJa9gWIy9hYgfwodbDNSaEWKFc2FYFljc2Z_ppr3d.dj21A; _cfuvid=NtPhGpNh1qO18JACcX8sq6sc1ezwWM.GW59ZEk89.JY-1741320736043-0.0.1.1-604800000' \
+--data '{
+    "order_number": "3301362103",
+    "awb" : "CO.ESPACE-20260831-1-CVI18C"
+}'

@@ -1,0 +1,15 @@
+/synctowebhook - Sync Stock ke Webhook
+
+Kamu bisa lakukan opsi:
+
+Opsi 1 - Shortcut Format:
+/synctowebhook "article_code": ABC123, "site_code": SS20, "company_code": COMPANY1, "stock": 100
+
+Opsi 2 - Label Format:
+article_code: ABC123
+site_code: SS20
+company_code: COMPANY1
+stock: 100
+timestamps: 2026-09-02T23:05:00Z (Opsional)
+
+Jika timestamps tidak diisi, akan otomatis gunakan waktu saat ini.

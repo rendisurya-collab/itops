@@ -37,6 +37,9 @@ from grab_client import GrabClient, GrabError, GrabNotFound
 from jira_client import JiraClient, JiraError
 from servicedesk_client import SDPClient, SDPError
 from webhook_sync import parse_synctowebhook_text, sync_stock_to_webhook, auto_fill_timestamp
+from sql_loader import SQLLoader
+from query_executor import QueryExecutor
+from dynamic_scheduler import DynamicScheduler
 
 # Sembunyikan peringatan PTBUserWarning agar terminal bersih
 warnings.filterwarnings("ignore", category=PTBUserWarning)
@@ -49,6 +52,11 @@ logger = logging.getLogger(__name__)
 jira = JiraClient()  # dipakai untuk fitur yang tidak butuh atribusi personal (/tasks, /export)
 sdp = SDPClient() if config.sdp_configured() else None
 grab = GrabClient() if config.grab_configured() else None
+
+# SQLLoader & DynamicScheduler
+sql_loader: SQLLoader = None
+query_executor: QueryExecutor = None
+dynamic_scheduler: DynamicScheduler = None
 
 _JIRA_CLIENT_CACHE = {}  # telegram_user_id (str) -> JiraClient
 
@@ -7698,6 +7706,109 @@ async def push_error_daily_job(context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Push Error daily job: {results[0][2]} error ditemukan.")
 
 
+# ============ SQLLoader & DynamicScheduler Initialization ============
+
+async def _init_sql_loader_scheduler(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Initialize SQLLoader dan DynamicScheduler pada bot startup.
+    """
+    global sql_loader, query_executor, dynamic_scheduler
+
+    try:
+        sql_folder_path = config.SQL_FOLDER_PATH if hasattr(config, 'SQL_FOLDER_PATH') else None
+        if not sql_folder_path:
+            logger.warning("SQL_FOLDER_PATH tidak dikonfigurasi di .env")
+            return
+
+        # Initialize SQLLoader
+        sql_loader = SQLLoader(sql_folder_path)
+        sql_count = sql_loader.load_sql_files()
+        config_loaded = sql_loader.load_config()
+        logger.info(f"SQLLoader initialized: {sql_count} queries, config_loaded={config_loaded}")
+
+        # Initialize QueryExecutor (dengan db_connection nanti bisa diset dari SDP/Jira)
+        query_executor = QueryExecutor(db_connection=None)
+        logger.info("QueryExecutor initialized")
+
+        # Initialize DynamicScheduler
+        dynamic_scheduler = DynamicScheduler(
+            sql_loader=sql_loader,
+            query_executor=query_executor,
+            telegram_notify_callback=_send_query_notification,
+        )
+
+        # Initialize dan start scheduler
+        if not dynamic_scheduler.initialize_scheduler():
+            logger.error("Failed to initialize scheduler")
+            return
+
+        if not dynamic_scheduler.start_scheduler():
+            logger.error("Failed to start scheduler")
+            return
+
+        # Register jobs dari config
+        registered_count = dynamic_scheduler.register_jobs_from_config()
+        logger.info(f"DynamicScheduler started: {registered_count} jobs registered")
+
+        await _broadcast_notify(
+            context,
+            f"SQLLoader & DynamicScheduler initialized:\n"
+            f"• SQL queries loaded: {sql_count}\n"
+            f"• Scheduled jobs: {registered_count}"
+        )
+
+    except Exception as e:
+        logger.exception(f"Error initializing SQL loader scheduler: {e}")
+
+
+async def _send_query_notification(
+    chat_id: str,
+    text: str,
+    excel_bytes: bytes = None,
+    filename: str = None
+):
+    """
+    Send query result notification to Telegram.
+
+    Args:
+        chat_id: Telegram chat ID
+        text: Text message
+        excel_bytes: Optional Excel file bytes
+        filename: Optional Excel filename
+    """
+    try:
+        # Get bot instance dari global context jika ada, atau fallback
+        # Ini akan dipanggil dari DynamicScheduler yang running di background
+        # Kami perlu create minimal bot client untuk send message
+        from telegram import Bot
+        
+        bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
+        
+        if excel_bytes:
+            # Send as file
+            excel_file = InputFile(io.BytesIO(excel_bytes), filename=filename or "query_result.xlsx")
+            await bot.send_document(
+                chat_id=chat_id,
+                document=excel_file,
+                caption=text[:1024],  # Telegram caption max 1024
+                read_timeout=120,
+                write_timeout=120,
+            )
+        else:
+            # Send as text
+            await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                read_timeout=30,
+                write_timeout=30,
+            )
+
+        logger.info(f"Query notification sent to {chat_id}")
+
+    except Exception as e:
+        logger.error(f"Error sending query notification: {e}")
+
+
 # ---------------- main ----------------
 
 def main():
@@ -8090,6 +8201,12 @@ def main():
         time=dt.time(hour=17, minute=0, tzinfo=TZ),
     )
     logger.info("Push Error query aktif setiap hari jam 17:00")
+
+    # Initialize SQLLoader & DynamicScheduler
+    app.job_queue.run_once(
+        _init_sql_loader_scheduler,
+        when=1,  # Jalankan 1 detik setelah bot start
+    )
 
     logger.info("Bot mulai berjalan...")
     app.run_polling()
