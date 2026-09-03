@@ -31,12 +31,17 @@ def ensure_playwright_browsers():
     try:
         logger.info("Attempting to install Playwright browsers...")
         
+        # Set PLAYWRIGHT_BROWSERS_PATH for Railway compatibility
+        env = os.environ.copy()
+        env['PLAYWRIGHT_BROWSERS_PATH'] = '/app/.playwright'
+        
         # Method 1: Use subprocess with python -m
         result = subprocess.run(
             [sys.executable, "-m", "playwright", "install", "chromium"],
             capture_output=True,
             text=True,
-            timeout=600
+            timeout=600,
+            env=env
         )
         
         if result.returncode == 0:
@@ -53,7 +58,8 @@ def ensure_playwright_browsers():
                 ["playwright", "install", "chromium"],
                 capture_output=True,
                 text=True,
-                timeout=600
+                timeout=600,
+                env=env
             )
             if result2.returncode == 0:
                 logger.info(f"✓ Playwright chromium installed via CLI")
@@ -117,6 +123,10 @@ class DatabaseConnector:
             (success, rows, error_message)
         """
         try:
+            # Ensure PLAYWRIGHT_BROWSERS_PATH is set for Railway
+            if 'PLAYWRIGHT_BROWSERS_PATH' not in os.environ:
+                os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '/app/.playwright'
+            
             # Ensure browsers installed before trying to use them
             install_ok = ensure_playwright_browsers()
             if not install_ok:
