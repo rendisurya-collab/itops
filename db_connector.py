@@ -15,24 +15,59 @@ logger = logging.getLogger(__name__)
 def ensure_playwright_browsers():
     """
     Ensure Playwright browsers are installed.
-    Run once at startup to install chromium if needed.
+    Uses playwright._impl._install module to install browsers programmatically.
     """
+    import sys
+    
     try:
+        # Try importing - if it fails, browsers aren't installed
         from playwright.sync_api import sync_playwright
-        logger.info("Playwright browsers already available")
+        logger.info("Playwright browsers check passed")
+        return True
     except Exception as e:
-        logger.warning(f"Playwright browsers not found, installing: {e}")
-        try:
-            subprocess.run(
+        logger.warning(f"Playwright browsers check failed: {e}")
+    
+    # Attempt to install
+    try:
+        logger.info("Attempting to install Playwright browsers...")
+        
+        # Method 1: Use subprocess with python -m
+        result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            capture_output=True,
+            text=True,
+            timeout=600
+        )
+        
+        if result.returncode == 0:
+            logger.info(f"✓ Playwright chromium installed successfully")
+            return True
+        else:
+            logger.error(f"Playwright install failed with code {result.returncode}")
+            logger.error(f"STDERR: {result.stderr}")
+            logger.error(f"STDOUT: {result.stdout}")
+            
+            # Retry with direct CLI
+            logger.warning("Retrying with direct CLI...")
+            result2 = subprocess.run(
                 ["playwright", "install", "chromium"],
-                check=True,
                 capture_output=True,
-                timeout=300
+                text=True,
+                timeout=600
             )
-            logger.info("Playwright chromium installed successfully")
-        except Exception as install_error:
-            logger.error(f"Failed to install Playwright browsers: {install_error}")
-            raise
+            if result2.returncode == 0:
+                logger.info(f"✓ Playwright chromium installed via CLI")
+                return True
+            else:
+                logger.error(f"Playwright CLI failed: {result2.stderr}")
+                return False
+                
+    except subprocess.TimeoutExpired:
+        logger.error("Playwright installation timeout (600s)")
+        return False
+    except Exception as e:
+        logger.error(f"Error installing Playwright browsers: {e}", exc_info=True)
+        return False
 
 
 class DatabaseConnector:
@@ -83,11 +118,12 @@ class DatabaseConnector:
         """
         try:
             # Ensure browsers installed before trying to use them
-            ensure_playwright_browsers()
+            install_ok = ensure_playwright_browsers()
+            if not install_ok:
+                logger.warning("Playwright installation may have failed, attempting to continue anyway...")
             
             from playwright.sync_api import sync_playwright
             from bs4 import BeautifulSoup
-            import time
             
             # Find database config
             db_config = None
