@@ -227,4 +227,4 @@ def webhook_stock_configured() -> bool:
 
 # ==== SQLLoader & Dynamic Scheduler ====
 # Path folder untuk menyimpan file .sql yang akan dijalankan secara otomatis
-SQL_FOLDER_PATH = os.getenv("SQL_FOLDER_PATH", "D:\\mybot\\tools\\queries")
+SQL_FOLDER_PATH = os.getenv("SQL_FOLDER_PATH", "./tools/queries")

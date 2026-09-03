@@ -20,7 +20,7 @@ class SQLLoader:
         Initialize SQLLoader.
 
         Args:
-            sql_folder_path: Path ke folder yang berisi file .sql (misal: D:\\mybot\\tools\\queries)
+            sql_folder_path: Path ke folder yang berisi file .sql (misal: ./tools/queries atau /app/tools/queries)
         """
         self.sql_folder_path = Path(sql_folder_path)
         self.queries: Dict[str, str] = {}
