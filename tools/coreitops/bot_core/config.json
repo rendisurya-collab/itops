@@ -11,10 +11,10 @@
         "basic_auth_user": "admin-era",
         "basic_auth_pass": "HUG8wQdfa6DWhY4n",
         "driver": "server",
-        "server": "172.20.82.44",
+        "server": "172.20.82.5",
         "username": "eraclub",
         "password": "mariadb2019@eraclub.com",
-        "db": "apis_2022"
+        "db": "omssrv_prod"
       },
       "query_files": [
         "cek_stock_minus.sql",
