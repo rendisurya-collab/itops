@@ -82,6 +82,9 @@ class DatabaseConnector:
             (success, rows, error_message)
         """
         try:
+            # Ensure browsers installed before trying to use them
+            ensure_playwright_browsers()
+            
             from playwright.sync_api import sync_playwright
             from bs4 import BeautifulSoup
             import time
@@ -187,9 +190,12 @@ class DatabaseConnector:
                     logger.error(error_msg)
                     return False, [], error_msg
                 finally:
-                    page.close()
-                    ctx.close()
-                    browser.close()
+                    try:
+                        page.close()
+                        ctx.close()
+                        browser.close()
+                    except:
+                        pass
 
         except Exception as e:
             error_msg = f"Database connection error: {str(e)}"
