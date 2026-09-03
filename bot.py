@@ -7932,6 +7932,82 @@ async def querystatus_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"Error: {str(e)}")
 
 
+@restricted
+async def querydebug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Debug command untuk investigate SQLLoader issues."""
+    global sql_loader
+    
+    try:
+        from pathlib import Path
+        
+        debug_lines = ["DEBUG INFO - SQLLoader\n"]
+        
+        # Check SQL_FOLDER_PATH dari config
+        sql_folder_path = config.SQL_FOLDER_PATH if hasattr(config, 'SQL_FOLDER_PATH') else None
+        debug_lines.append(f"SQL_FOLDER_PATH from config: {sql_folder_path}")
+        
+        if not sql_folder_path:
+            debug_lines.append("❌ SQL_FOLDER_PATH tidak dikonfigurasi")
+            await update.message.reply_text("\n".join(debug_lines))
+            return
+        
+        # Check folder exists
+        folder = Path(sql_folder_path)
+        debug_lines.append(f"Folder exists: {folder.exists()}")
+        debug_lines.append(f"Is directory: {folder.is_dir()}")
+        
+        if folder.exists() and folder.is_dir():
+            # List .sql files di folder
+            sql_files = list(folder.glob("*.sql"))
+            debug_lines.append(f"\n.sql files found: {len(sql_files)}")
+            for sql_file in sql_files:
+                size = sql_file.stat().st_size
+                debug_lines.append(f"  - {sql_file.name} ({size} bytes)")
+            
+            # Check query_config.json
+            config_file = folder / "query_config.json"
+            debug_lines.append(f"\nquery_config.json exists: {config_file.exists()}")
+            
+            if config_file.exists():
+                import json
+                try:
+                    with open(config_file, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+                    debug_lines.append(f"Config entries: {len(config_data)}")
+                    for key in config_data.keys():
+                        debug_lines.append(f"  - {key}")
+                except Exception as e:
+                    debug_lines.append(f"❌ Error reading config: {e}")
+        else:
+            debug_lines.append(f"❌ Folder tidak ditemukan atau bukan directory")
+        
+        # Check SQLLoader state
+        if sql_loader:
+            debug_lines.append(f"\nSQLLoader state:")
+            debug_lines.append(f"  Queries in memory: {len(sql_loader.queries)}")
+            debug_lines.append(f"  Config in memory: {len(sql_loader.config)}")
+            
+            if sql_loader.queries:
+                debug_lines.append(f"  Loaded queries:")
+                for name in sql_loader.queries.keys():
+                    debug_lines.append(f"    - {name}")
+            
+            if sql_loader.config:
+                debug_lines.append(f"  Config entries:")
+                for name, entry in sql_loader.config.items():
+                    enabled = entry.get('enabled', False)
+                    debug_lines.append(f"    - {name}: enabled={enabled}")
+        else:
+            debug_lines.append(f"❌ SQLLoader belum initialized")
+        
+        text = "\n".join(debug_lines)
+        await update.message.reply_text(text)
+    
+    except Exception as e:
+        logger.exception(f"Error in querydebug_command: {e}")
+        await update.message.reply_text(f"Debug error: {str(e)}")
+
+
 # ---------------- main ----------------
 
 def main():
@@ -8211,6 +8287,7 @@ def main():
     app.add_handler(CommandHandler("querylist", querylist_command))
     app.add_handler(CommandHandler("queryreload", queryreload_command))
     app.add_handler(CommandHandler("querystatus", querystatus_command))
+    app.add_handler(CommandHandler("querydebug", querydebug_command))
 
     # Knowledge Base / Bank Data commands
     app.add_handler(CommandHandler("tanyabot", tanya_command))
