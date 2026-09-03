@@ -270,7 +270,7 @@ class DynamicScheduler:
                 "name": job.name,
                 "id": job.id,
                 "trigger": str(job.trigger),
-                "next_run": job.next_run_time,
+                "next_run": getattr(job, 'next_run_time', None),
             }
             for job in self.scheduler.get_jobs()
         ]
