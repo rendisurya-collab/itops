@@ -21,6 +21,13 @@
     "telegram_chat_id": "",
     "description": "Check status yang perlu di-validate"
   },
+  "status_erpi": {
+    "enabled": true,
+    "schedule_type": "interval",
+    "interval_minutes": 5,
+    "telegram_chat_id": "",
+    "description": "Check status yang perlu di-validate"
+  },
   "_example_notes": {
     "enabled": false,
     "schedule_type": "notes",
