@@ -148,6 +148,25 @@ class DatabaseConnector:
                         page_content = page.content()
                         logger.error(f"Could not find SQL page. Current URL: {page.url}")
                         logger.error(f"Page length: {len(page_content)}")
+                        
+                        # Save page content to file for analysis
+                        import time
+                        timestamp = int(time.time())
+                        debug_file = f"/tmp/adminer_debug_{timestamp}.html"
+                        try:
+                            with open(debug_file, 'w', encoding='utf-8') as f:
+                                f.write(page_content)
+                            logger.info(f"Page content saved to {debug_file}")
+                        except Exception as e:
+                            logger.warning(f"Could not save debug file: {e}")
+                        
+                        # Try to find textarea with any name
+                        all_textareas = page.locator("textarea")
+                        logger.error(f"Found {all_textareas.count()} textareas on page")
+                        for i in range(all_textareas.count()):
+                            ta_name = all_textareas.nth(i).get_attribute("name")
+                            logger.error(f"Textarea {i}: name={ta_name}")
+                        
                         return False, [], "Query textarea tidak ditemukan di Adminer - SQL page tidak accessible"
 
                     # Fill query
