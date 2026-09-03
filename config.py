@@ -1,6 +1,20 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
+# Load .env dari current directory dan parent directories
+env_paths = [
+    Path(".env"),
+    Path("../.env"),
+    Path("/app/.env"),
+]
+
+for env_path in env_paths:
+    if env_path.exists():
+        load_dotenv(env_path)
+        break
+
+# Load .env dari current working directory (Railway default)
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
