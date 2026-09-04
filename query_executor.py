@@ -83,8 +83,8 @@ class QueryExecutor:
 
     def format_rows_as_text(self, rows: list, max_chars: int = 3500) -> Tuple[str, bool]:
         """
-        Format hasil query sebagai readable text untuk Telegram.
-        Gunakan code block format untuk clarity.
+        Format hasil query sebagai simple readable text untuk Telegram.
+        Hanya text dan angka, tanpa border.
 
         Args:
             rows: List of tuples (hasil query)
@@ -113,23 +113,18 @@ class QueryExecutor:
             # Cap width to prevent too long lines (max 20 per column)
             col_widths = [min(w, 20) for w in col_widths]
             
-            # Add header with better formatting
+            # Add header
             header_cells = []
             for i in range(num_cols):
                 header = f"Col{i+1}".ljust(col_widths[i])
                 header_cells.append(header)
             
-            # Top separator
-            sep_line = "╔" + "╦".join("═" * (w) for w in col_widths) + "╗"
-            lines.append(sep_line)
-            
-            # Header row
-            header_line = "║" + "║".join(header_cells) + "║"
+            header_line = "  ".join(header_cells)
             lines.append(header_line)
             
-            # Middle separator
-            mid_sep = "╠" + "╬".join("═" * (w) for w in col_widths) + "╣"
-            lines.append(mid_sep)
+            # Separator line
+            sep_line = "  ".join("─" * w for w in col_widths)
+            lines.append(sep_line)
             
             # Data rows
             for row_idx, row in enumerate(rows):
@@ -142,12 +137,8 @@ class QueryExecutor:
                             val_str = val_str[:col_widths[col_idx]-3] + "..."
                         row_cells.append(val_str.ljust(col_widths[col_idx]))
                         
-                row_line = "║" + "║".join(row_cells) + "║"
+                row_line = "  ".join(row_cells)
                 lines.append(row_line)
-            
-            # Bottom separator
-            bottom_sep = "╚" + "╩".join("═" * (w) for w in col_widths) + "╝"
-            lines.append(bottom_sep)
             
             # Wrap in code block for monospace and clarity
             text = "```\n" + "\n".join(lines) + "\n```"
