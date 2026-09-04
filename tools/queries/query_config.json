@@ -19,7 +19,7 @@
   "status_need_validate": {
     "enabled": true,
     "schedule_type": "interval",
-    "interval_minutes": 3,
+    "interval_minutes": 60,
     "telegram_chat_id": "",
     "database": "apis_2022",
     "description": "Check status yang perlu di-validate"
