@@ -231,11 +231,30 @@ class DatabaseConnector:
                     logger.info("Found query textarea, filling query...")
                     query_textarea = page.locator("textarea[name='query']").first
                     
-                    # Scroll textarea into view before filling
-                    query_textarea.scroll_into_view_if_needed()
-                    page.wait_for_timeout(500)  # Wait for scroll animation
+                    # Try to fill directly without scroll - use JavaScript if needed
+                    try:
+                        # First try regular fill
+                        query_textarea.fill(query, timeout=5000)
+                        logger.info("Query filled successfully!")
+                    except Exception as fill_error:
+                        logger.warning(f"Regular fill failed: {fill_error}")
+                        logger.info("Trying JavaScript-based fill...")
+                        
+                        # Use JavaScript to set value directly (bypasses visibility checks)
+                        page.evaluate("""
+                            (function() {
+                                const textarea = document.querySelector('textarea[name="query"]');
+                                if (textarea) {
+                                    textarea.value = arguments[0];
+                                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                                    return true;
+                                }
+                                return false;
+                            })
+                        """, query)
+                        logger.info("Query set via JavaScript!")
                     
-                    query_textarea.fill(query)
                     logger.info(f"Query filled, executing...")
 
                     # Execute - find submit button
