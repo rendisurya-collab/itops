@@ -230,6 +230,11 @@ class DatabaseConnector:
                     
                     logger.info("Found query textarea, filling query...")
                     query_textarea = page.locator("textarea[name='query']").first
+                    
+                    # Scroll textarea into view before filling
+                    query_textarea.scroll_into_view_if_needed()
+                    page.wait_for_timeout(500)  # Wait for scroll animation
+                    
                     query_textarea.fill(query)
                     logger.info(f"Query filled, executing...")
 
