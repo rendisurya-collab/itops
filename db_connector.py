@@ -118,92 +118,58 @@ class DatabaseConnector:
                         err_txt = page.locator('div.error').first.text_content()
                         return False, [], f"Adminer login error: {err_txt.strip()}"
 
-                    logger.info(f"Login successful, navigating to SQL page...")
-                    # Execute query - navigate to SQL query page
-                    # Try multiple possible URLs for SQL page
-                    sql_urls = [
-                        adm['url'] + '?sql=',
-                        adm['url'].rstrip('/') + '/?sql=',
-                        adm['url'].rstrip('/') + '/?action=sql',
-                    ]
+                    logger.info(f"Login successful, current URL: {page.url}")
                     
-                    page_loaded = False
-                    for sql_url in sql_urls:
-                        try:
-                            logger.info(f"Trying SQL URL: {sql_url}")
-                            page.goto(sql_url, wait_until='load', timeout=15000)
-                            
-                            # Log page info for debugging
-                            page_title = page.title()
-                            page_url = page.url
-                            logger.info(f"Page title: {page_title}, URL: {page_url}")
-                            
-                            # Check if we got redirected to login (common issue)
-                            if 'login' in page_title.lower() or 'auth' in page_title.lower():
-                                logger.warning(f"Seems we got redirected to login page. Title: {page_title}")
-                                continue
-                            
-                            # Wait for textarea with longer timeout and allow DOM mutations
-                            try:
-                                query_textarea = page.locator("textarea[name='query']")
-                                # Wait for it to be visible
-                                query_textarea.first.wait_for(timeout=5000, state='visible')
-                                logger.info(f"Found query textarea at {sql_url}")
-                                page_loaded = True
-                                break
-                            except Exception as wait_error:
-                                logger.warning(f"Textarea not visible at {sql_url}: {wait_error}")
-                                
-                                # Try generic textarea selector
-                                all_textareas = page.locator("textarea")
-                                logger.info(f"Found {all_textareas.count()} textareas (trying generic selector)")
-                                if all_textareas.count() > 0:
-                                    # Found textarea with generic selector
-                                    logger.info("Using first textarea found")
-                                    page_loaded = True
-                                    break
-                                    
-                        except Exception as e:
-                            logger.warning(f"SQL URL {sql_url} failed: {e}")
-                            continue
+                    # After login, we're already in the database
+                    # Now we need to execute query - but can't navigate (loses session)
+                    # Instead, look for query form on current page or in sidebar
                     
-                    if not page_loaded:
-                        # Log page content for debugging
-                        page_content = page.content()
-                        logger.error(f"Could not find SQL page. Current URL: {page.url}")
-                        logger.error(f"Page title: {page.title()}")
-                        logger.error(f"Page length: {len(page_content)}")
-                        
-                        # Save page content to file for analysis
-                        import time
-                        timestamp = int(time.time())
-                        debug_file = f"/tmp/adminer_debug_{timestamp}.html"
-                        try:
-                            with open(debug_file, 'w', encoding='utf-8') as f:
-                                f.write(page_content)
-                            logger.info(f"Page content saved to {debug_file}")
-                        except Exception as e:
-                            logger.warning(f"Could not save debug file: {e}")
-                        
-                        # Try to find textarea with any name
-                        all_textareas = page.locator("textarea")
-                        logger.error(f"Found {all_textareas.count()} textareas on page")
-                        for i in range(all_textareas.count()):
-                            ta_name = all_textareas.nth(i).get_attribute("name")
-                            logger.error(f"Textarea {i}: name={ta_name}")
-                        
-                        # Try to find any input or form elements
-                        all_inputs = page.locator("input[type='text'], input[type='submit'], textarea")
-                        logger.error(f"Found {all_inputs.count()} form elements total")
-                        
-                        return False, [], "Query textarea tidak ditemukan di Adminer - SQL page tidak accessible"
-
-                    # Fill query
+                    # Try to find query textarea on current page
                     query_textarea = page.locator("textarea[name='query']")
-                    if query_textarea.count() == 0:
-                        # Try generic textarea selector
-                        query_textarea = page.locator("textarea").first
                     
+                    if query_textarea.count() == 0:
+                        # Try to click on SQL/Query link/menu if available
+                        logger.info("Looking for SQL menu option...")
+                        
+                        # Try common SQL menu selectors
+                        sql_menu_selectors = [
+                            "a:has-text('SQL')",
+                            "a:has-text('SQL command')",
+                            "a:has-text('Execute SQL')",
+                            "button:has-text('SQL')",
+                        ]
+                        
+                        menu_found = False
+                        for selector in sql_menu_selectors:
+                            try:
+                                menu_item = page.locator(selector)
+                                if menu_item.count() > 0:
+                                    logger.info(f"Found SQL menu: {selector}")
+                                    menu_item.first.click()
+                                    page.wait_for_load_state('load', timeout=10000)
+                                    menu_found = True
+                                    break
+                            except Exception as e:
+                                logger.warning(f"Menu selector {selector} failed: {e}")
+                        
+                        # Check again for textarea
+                        query_textarea = page.locator("textarea[name='query']")
+                        if query_textarea.count() == 0:
+                            logger.error(f"Still no textarea. Page title: {page.title()}")
+                            logger.error(f"Page URL: {page.url}")
+                            
+                            # Log all links/buttons for debugging
+                            all_links = page.locator("a, button")
+                            logger.error(f"Found {all_links.count()} links/buttons on page")
+                            for i in range(min(10, all_links.count())):
+                                text = all_links.nth(i).text_content()
+                                href = all_links.nth(i).get_attribute("href") or "N/A"
+                                logger.error(f"  {i}: {text.strip()[:50]} (href: {href})")
+                            
+                            return False, [], "Cannot find SQL query form - menu navigation failed"
+                    
+                    logger.info("Found query textarea, filling query...")
+                    query_textarea = page.locator("textarea[name='query']").first
                     query_textarea.fill(query)
                     logger.info(f"Query filled, executing...")
 
