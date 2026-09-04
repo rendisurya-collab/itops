@@ -151,8 +151,20 @@ class DynamicScheduler:
             if not rows:
                 logger.info(f"Query '{query_name}' returned 0 rows, skip notification")
                 return
+            
+            # Check if all rows are essentially NULL/empty
+            has_data = False
+            for row in rows:
+                # Check if any cell in row is not None and not empty string
+                if any(cell and str(cell).strip() for cell in row):
+                    has_data = True
+                    break
+            
+            if not has_data:
+                logger.info(f"Query '{query_name}' returned {len(rows)} rows but all are NULL/empty, skip notification")
+                return
 
-            logger.info(f"Query '{query_name}' returned {len(rows)} rows")
+            logger.info(f"Query '{query_name}' returned {len(rows)} rows with data")
 
             # Process result (text + optional Excel)
             text_message, excel_bytes, process_error = await asyncio.to_thread(
