@@ -184,7 +184,38 @@ class DatabaseConnector:
                         # Check again for textarea
                         query_textarea = page.locator("textarea[name='query']")
                         if query_textarea.count() == 0:
-                            logger.error(f"Still no textarea. Page title: {page.title()}")
+                            logger.info("Textarea not found after re-login, trying URL navigation...")
+                            
+                            # We're now on database page, need to get to SQL query page
+                            # Try to navigate via URL with proper params
+                            current_url = page.url
+                            # Add ?sql= to URL to get SQL page
+                            sql_url = current_url + ("&sql=" if "?" in current_url else "?sql=")
+                            logger.info(f"Navigating to SQL via URL: {sql_url}")
+                            
+                            page.goto(sql_url, wait_until='load', timeout=15000)
+                            page.wait_for_timeout(1000)  # Extra wait for page render
+                            
+                            # Check for textarea
+                            query_textarea = page.locator("textarea[name='query']")
+                            if query_textarea.count() == 0:
+                                logger.error(f"Still no textarea after URL navigation. Page title: {page.title()}")
+                                logger.error(f"Page URL: {page.url}")
+                                
+                                # Log all links/buttons for debugging
+                                all_links = page.locator("a, button")
+                                logger.error(f"Found {all_links.count()} links/buttons on page")
+                                for i in range(min(10, all_links.count())):
+                                    text = all_links.nth(i).text_content()
+                                    href = all_links.nth(i).get_attribute("href") or "N/A"
+                                    logger.error(f"  {i}: {text.strip()[:50]} (href: {href})")
+                                
+                                return False, [], "Cannot find SQL query form - textarea not accessible"
+                            else:
+                                logger.info("Found textarea after URL navigation!")
+                        
+                        else:
+                            logger.error(f"Page title: {page.title()}")
                             logger.error(f"Page URL: {page.url}")
                             
                             # Log all links/buttons for debugging
