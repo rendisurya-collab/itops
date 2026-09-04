@@ -83,59 +83,72 @@ class QueryExecutor:
 
     def format_rows_as_text(self, rows: list, max_chars: int = 3500) -> Tuple[str, bool]:
         """
-        Format hasil query sebagai HTML table untuk Telegram.
+        Format hasil query sebagai formatted text table untuk Telegram.
+        Menggunakan monospace format dengan alignment yang rapih.
 
         Args:
             rows: List of tuples (hasil query)
             max_chars: Max character limit untuk teks
 
         Return:
-            (formatted_html, exceeded_limit: bool)
+            (formatted_text, exceeded_limit: bool)
         """
         if not rows:
             return "Tidak ada data", False
 
         try:
-            # Start HTML table
-            html = '<table><tr style="background-color: #4472C4; color: white; font-weight: bold;">'
+            # Determine column widths
+            num_cols = len(rows[0]) if isinstance(rows[0], (tuple, list)) else 1
+            col_widths = [0] * num_cols
             
-            # Try to infer headers from first row or use generic Column names
-            first_row = rows[0]
-            num_cols = len(first_row) if isinstance(first_row, (tuple, list)) else 1
+            # Calculate max width per column
+            for row in rows:
+                if isinstance(row, (tuple, list)):
+                    for col_idx, value in enumerate(row):
+                        val_str = str(value) if value is not None else ""
+                        col_widths[col_idx] = max(col_widths[col_idx], len(val_str), 10)  # min 10
+                        
+            # Cap width to prevent too long lines
+            col_widths = [min(w, 25) for w in col_widths]
+            
+            lines = []
+            
+            # Add header separator
+            separator = "+" + "+".join("-" * (w + 2) for w in col_widths) + "+"
+            lines.append(separator)
             
             # Add header row
-            for col_idx in range(num_cols):
-                html += f'<th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Column {col_idx + 1}</th>'
-            html += '</tr>'
+            header_cells = []
+            for i in range(num_cols):
+                header_cells.append(f"Column {i+1}".center(col_widths[i]))
+            header_line = "|" + "|".join(f" {cell} " for cell in header_cells) + "|"
+            lines.append(header_line)
+            lines.append(separator)
             
             # Add data rows
             for row_idx, row in enumerate(rows):
-                # Alternate row colors
-                bg_color = '#f9f9f9' if row_idx % 2 == 0 else '#ffffff'
-                html += f'<tr style="background-color: {bg_color};">'
-                
+                row_cells = []
                 if isinstance(row, (tuple, list)):
-                    for value in row:
-                        # Escape HTML and handle None values
-                        display_val = str(value) if value is not None else ''
-                        html += f'<td style="padding: 8px; border: 1px solid #ddd; text-align: left;">{display_val}</td>'
-                else:
-                    # Handle dict rows
-                    for key, value in (row.items() if isinstance(row, dict) else []):
-                        display_val = str(value) if value is not None else ''
-                        html += f'<td style="padding: 8px; border: 1px solid #ddd; text-align: left;">{display_val}</td>'
-                
-                html += '</tr>'
+                    for col_idx, value in enumerate(row):
+                        val_str = str(value) if value is not None else "NULL"
+                        # Truncate if too long
+                        if len(val_str) > col_widths[col_idx]:
+                            val_str = val_str[:col_widths[col_idx]-3] + "..."
+                        row_cells.append(val_str.ljust(col_widths[col_idx]))
+                        
+                row_line = "|" + "|".join(f" {cell} " for cell in row_cells) + "|"
+                lines.append(row_line)
             
-            html += '</table>'
+            lines.append(separator)
             
-            exceeded = len(html) > max_chars
+            text = "\n".join(lines)
+            exceeded = len(text) > max_chars
 
             if exceeded:
                 # Truncate dengan indikasi
-                html = html[:max_chars] + f"<br><br><i>... (Data terlalu panjang, total {len(html)} chars. Lihat file Excel untuk data lengkap)</i>"
+                text = text[:max_chars] + f"\n\n... (Data terlalu panjang, total {len(text)} chars. Lihat file Excel untuk data lengkap)"
 
-            return html, exceeded
+            return text, exceeded
 
         except Exception as e:
             logger.error(f"Error formatting rows: {e}")
