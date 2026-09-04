@@ -83,8 +83,8 @@ class QueryExecutor:
 
     def format_rows_as_text(self, rows: list, max_chars: int = 3500) -> Tuple[str, bool]:
         """
-        Format hasil query sebagai formatted text table untuk Telegram.
-        Menggunakan monospace format dengan alignment yang rapih.
+        Format hasil query sebagai readable text untuk Telegram.
+        Gunakan code block format untuk clarity.
 
         Args:
             rows: List of tuples (hasil query)
@@ -97,35 +97,41 @@ class QueryExecutor:
             return "Tidak ada data", False
 
         try:
-            # Determine column widths
+            lines = []
+            
+            # Determine column widths based on content
             num_cols = len(rows[0]) if isinstance(rows[0], (tuple, list)) else 1
-            col_widths = [0] * num_cols
+            col_widths = [12] * num_cols  # Default min width
             
             # Calculate max width per column
             for row in rows:
                 if isinstance(row, (tuple, list)):
                     for col_idx, value in enumerate(row):
-                        val_str = str(value) if value is not None else ""
-                        col_widths[col_idx] = max(col_widths[col_idx], len(val_str), 10)  # min 10
+                        val_str = str(value) if value is not None else "NULL"
+                        col_widths[col_idx] = max(col_widths[col_idx], len(val_str))
                         
-            # Cap width to prevent too long lines
-            col_widths = [min(w, 25) for w in col_widths]
+            # Cap width to prevent too long lines (max 20 per column)
+            col_widths = [min(w, 20) for w in col_widths]
             
-            lines = []
-            
-            # Add header separator
-            separator = "+" + "+".join("-" * (w + 2) for w in col_widths) + "+"
-            lines.append(separator)
-            
-            # Add header row
+            # Add header with better formatting
             header_cells = []
             for i in range(num_cols):
-                header_cells.append(f"Column {i+1}".center(col_widths[i]))
-            header_line = "|" + "|".join(f" {cell} " for cell in header_cells) + "|"
-            lines.append(header_line)
-            lines.append(separator)
+                header = f"Col{i+1}".ljust(col_widths[i])
+                header_cells.append(header)
             
-            # Add data rows
+            # Top separator
+            sep_line = "╔" + "╦".join("═" * (w) for w in col_widths) + "╗"
+            lines.append(sep_line)
+            
+            # Header row
+            header_line = "║" + "║".join(header_cells) + "║"
+            lines.append(header_line)
+            
+            # Middle separator
+            mid_sep = "╠" + "╬".join("═" * (w) for w in col_widths) + "╣"
+            lines.append(mid_sep)
+            
+            # Data rows
             for row_idx, row in enumerate(rows):
                 row_cells = []
                 if isinstance(row, (tuple, list)):
@@ -136,17 +142,21 @@ class QueryExecutor:
                             val_str = val_str[:col_widths[col_idx]-3] + "..."
                         row_cells.append(val_str.ljust(col_widths[col_idx]))
                         
-                row_line = "|" + "|".join(f" {cell} " for cell in row_cells) + "|"
+                row_line = "║" + "║".join(row_cells) + "║"
                 lines.append(row_line)
             
-            lines.append(separator)
+            # Bottom separator
+            bottom_sep = "╚" + "╩".join("═" * (w) for w in col_widths) + "╝"
+            lines.append(bottom_sep)
             
-            text = "\n".join(lines)
+            # Wrap in code block for monospace and clarity
+            text = "```\n" + "\n".join(lines) + "\n```"
+            
             exceeded = len(text) > max_chars
 
             if exceeded:
                 # Truncate dengan indikasi
-                text = text[:max_chars] + f"\n\n... (Data terlalu panjang, total {len(text)} chars. Lihat file Excel untuk data lengkap)"
+                text = text[:max_chars] + f"\n\n... (Data terlalu panjang, lihat file Excel untuk data lengkap)"
 
             return text, exceeded
 
