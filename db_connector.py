@@ -152,6 +152,35 @@ class DatabaseConnector:
                             except Exception as e:
                                 logger.warning(f"Menu selector {selector} failed: {e}")
                         
+                        # Check if we got redirected to login again after clicking SQL
+                        page_title = page.title()
+                        if 'login' in page_title.lower():
+                            logger.info(f"Got redirected to login after SQL click. Re-login for DB access...")
+                            # Need to login again with DB credentials
+                            
+                            driver_select = page.locator("select[name='auth[driver]']")
+                            if driver_select.count() > 0 and adm.get('driver'):
+                                try:
+                                    driver_select.select_option(value=adm['driver'], timeout=2000)
+                                except Exception:
+                                    pass
+
+                            page.fill("input[name='auth[server]']", adm['server'])
+                            page.fill("input[name='auth[username]']", adm['username'])
+                            page.fill("input[name='auth[password]']", adm['password'])
+
+                            db_input = page.locator("input[name='auth[db]']")
+                            if db_input.count() > 0:
+                                db_input.fill(adm['db'])
+
+                            logger.info("Submitting login form again...")
+                            page.click("input[type='submit']")
+                            page.wait_for_load_state('networkidle', timeout=30000)
+                            
+                            if page.locator('div.error').count() > 0:
+                                err_txt = page.locator('div.error').first.text_content()
+                                return False, [], f"Adminer re-login error: {err_txt.strip()}"
+                        
                         # Check again for textarea
                         query_textarea = page.locator("textarea[name='query']")
                         if query_textarea.count() == 0:
