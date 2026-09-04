@@ -83,39 +83,59 @@ class QueryExecutor:
 
     def format_rows_as_text(self, rows: list, max_chars: int = 3500) -> Tuple[str, bool]:
         """
-        Format hasil query sebagai teks plain untuk Telegram.
+        Format hasil query sebagai HTML table untuk Telegram.
 
         Args:
             rows: List of tuples (hasil query)
             max_chars: Max character limit untuk teks
 
         Return:
-            (formatted_text, exceeded_limit: bool)
+            (formatted_html, exceeded_limit: bool)
         """
         if not rows:
             return "Tidak ada data", False
 
         try:
-            lines = []
-            for i, row in enumerate(rows, 1):
-                # Convert tuple to readable string
-                if isinstance(row, dict):
-                    # Jika hasil berbentuk dict
-                    row_str = " | ".join(f"{k}: {v}" for k, v in row.items())
+            # Start HTML table
+            html = '<table><tr style="background-color: #4472C4; color: white; font-weight: bold;">'
+            
+            # Try to infer headers from first row or use generic Column names
+            first_row = rows[0]
+            num_cols = len(first_row) if isinstance(first_row, (tuple, list)) else 1
+            
+            # Add header row
+            for col_idx in range(num_cols):
+                html += f'<th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Column {col_idx + 1}</th>'
+            html += '</tr>'
+            
+            # Add data rows
+            for row_idx, row in enumerate(rows):
+                # Alternate row colors
+                bg_color = '#f9f9f9' if row_idx % 2 == 0 else '#ffffff'
+                html += f'<tr style="background-color: {bg_color};">'
+                
+                if isinstance(row, (tuple, list)):
+                    for value in row:
+                        # Escape HTML and handle None values
+                        display_val = str(value) if value is not None else ''
+                        html += f'<td style="padding: 8px; border: 1px solid #ddd; text-align: left;">{display_val}</td>'
                 else:
-                    # Jika hasil berbentuk tuple
-                    row_str = " | ".join(str(v) for v in row)
-
-                lines.append(f"{i}. {row_str}")
-
-            text = "\n".join(lines)
-            exceeded = len(text) > max_chars
+                    # Handle dict rows
+                    for key, value in (row.items() if isinstance(row, dict) else []):
+                        display_val = str(value) if value is not None else ''
+                        html += f'<td style="padding: 8px; border: 1px solid #ddd; text-align: left;">{display_val}</td>'
+                
+                html += '</tr>'
+            
+            html += '</table>'
+            
+            exceeded = len(html) > max_chars
 
             if exceeded:
                 # Truncate dengan indikasi
-                text = text[:max_chars] + f"\n\n... (Teks terlalu panjang, total {len(text)} chars. Lihat file Excel untuk data lengkap)"
+                html = html[:max_chars] + f"<br><br><i>... (Data terlalu panjang, total {len(html)} chars. Lihat file Excel untuk data lengkap)</i>"
 
-            return text, exceeded
+            return html, exceeded
 
         except Exception as e:
             logger.error(f"Error formatting rows: {e}")
