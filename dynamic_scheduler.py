@@ -152,19 +152,22 @@ class DynamicScheduler:
                 logger.info(f"Query '{query_name}' returned 0 rows, skip notification")
                 return
             
-            # Check if all rows are essentially NULL/empty
-            has_data = False
+            # Filter out rows that are mostly NULL
+            meaningful_rows = []
             for row in rows:
-                # Check if any cell in row is not None and not empty string
-                if any(cell and str(cell).strip() for cell in row):
-                    has_data = True
-                    break
+                # Count non-NULL, non-empty cells in row
+                non_null_count = sum(1 for cell in row if cell is not None and str(cell).strip() and str(cell).upper() != 'NULL')
+                # Keep row if at least 50% of cells have meaningful data
+                if non_null_count >= len(row) * 0.5:
+                    meaningful_rows.append(row)
             
-            if not has_data:
-                logger.info(f"Query '{query_name}' returned {len(rows)} rows but all are NULL/empty, skip notification")
+            if not meaningful_rows:
+                logger.info(f"Query '{query_name}' returned {len(rows)} rows but none have meaningful data (50%+ non-NULL), skip notification")
                 return
-
-            logger.info(f"Query '{query_name}' returned {len(rows)} rows with data")
+            
+            # Use filtered rows for further processing
+            rows = meaningful_rows
+            logger.info(f"Query '{query_name}' returned {len(rows)} meaningful rows (after filtering NULL-heavy rows)")
 
             # Process result (text + optional Excel)
             text_message, excel_bytes, process_error = await asyncio.to_thread(
