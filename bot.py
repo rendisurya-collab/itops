@@ -41,6 +41,8 @@ from sql_loader import SQLLoader
 from query_executor import QueryExecutor
 from dynamic_scheduler import DynamicScheduler
 from db_connector import DatabaseConnector
+from issue_logger import IssueLogger
+from issue_commands import handle_noteissue, handle_listissue, init_issue_logger
 
 # Sembunyikan peringatan PTBUserWarning agar terminal bersih
 warnings.filterwarnings("ignore", category=PTBUserWarning)
@@ -8314,6 +8316,10 @@ def main():
     app.add_handler(CommandHandler("querystatus", querystatus_command))
     app.add_handler(CommandHandler("querydebug", querydebug_command))
 
+    # Issue Logger commands (Google Sheets integration)
+    app.add_handler(CommandHandler("noteissue", handle_noteissue))
+    app.add_handler(CommandHandler("listissue", handle_listissue))
+
     # Knowledge Base / Bank Data commands
     app.add_handler(CommandHandler("tanyabot", tanya_command))
     app.add_handler(CommandHandler("addfaq", addfaq_command))
@@ -8437,6 +8443,13 @@ def main():
         _init_sql_loader_scheduler,
         when=1,  # Jalankan 1 detik setelah bot start
     )
+    
+    # Initialize Issue Logger (Google Sheets)
+    init_success = init_issue_logger()
+    if init_success:
+        logger.info("✓ Issue Logger (Google Sheets) initialized")
+    else:
+        logger.warning("⚠️  Issue Logger initialization failed - /noteissue & /listissue will not work")
 
     logger.info("Bot mulai berjalan...")
     app.run_polling()
