@@ -37,16 +37,23 @@ class IssueLogger:
 
     def _initialize_sheets(self) -> bool:
         """
-        Initialize Google Sheets client dan buka spreadsheet itops-ticket-log.
+        Initialize Google Sheets client menggunakan existing Railway variables.
+        Gunakan GOOGLE_SHEETS_CREDENTIALS dan GOOGLE_SHEETS_SPREADSHEET_ID.
         
         Return:
             bool: True jika berhasil, False jika error
         """
         try:
-            # Get credentials dari env var (base64 encoded JSON)
-            creds_json = os.getenv('GOOGLE_SHEETS_CREDENTIALS_JSON')
+            # Get credentials dari env var (sudah terintegrasi di Railway)
+            creds_json = os.getenv('GOOGLE_SHEETS_CREDENTIALS')
+            spreadsheet_id = os.getenv('GOOGLE_SHEETS_SPREADSHEET_ID')
+            
             if not creds_json:
-                logger.error("GOOGLE_SHEETS_CREDENTIALS_JSON tidak ditemukan di .env")
+                logger.error("GOOGLE_SHEETS_CREDENTIALS tidak ditemukan di environment")
+                return False
+            
+            if not spreadsheet_id:
+                logger.error("GOOGLE_SHEETS_SPREADSHEET_ID tidak ditemukan di environment")
                 return False
             
             # Parse JSON credentials
@@ -64,9 +71,9 @@ class IssueLogger:
             # Initialize gspread client
             self.client = gspread.authorize(credentials)
             
-            # Open spreadsheet by name
-            self.spreadsheet = self.client.open('itops-ticket-log')
-            logger.info("✓ Google Sheets client initialized")
+            # Open spreadsheet by ID (more reliable than by name)
+            self.spreadsheet = self.client.open_by_key(spreadsheet_id)
+            logger.info("✓ Google Sheets client initialized (using existing Railway credentials)")
             
             # Try to open IssueLogs worksheet, if not exist create it
             try:
