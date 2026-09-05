@@ -227,7 +227,7 @@ def format_issues_as_text(rows: list) -> str:
             action = action[:80] + "..." if len(action) > 80 else action
             
             lines.append(f"{idx}. {source} ({timestamp})")
-            lines.append(f"   username: {username}")
+            lines.append(f"   reporter: {username}")
             if ticket_number and ticket_number != "-":
                 lines.append(f"   ticketnumber: {ticket_number}")
             lines.append(f"   detail issue: {detail}")
@@ -254,8 +254,8 @@ def create_excel_from_issues(rows: list) -> BytesIO:
     ws = wb.active
     ws.title = "IssueLogs"
     
-    # Add headers (now with Username and Ticket Number)
-    headers = ['Tanggal Issue', 'Chat ID', 'Username', 'Ticket Number', 'Source', 'Detail Issue', 'Action Resolved']
+    # Add headers (now with Reporter and Ticket Number)
+    headers = ['Tanggal Issue', 'Chat ID', 'Reporter', 'Ticket Number', 'Source', 'Detail Issue', 'Action Resolved']
     ws.append(headers)
     
     # Style header row

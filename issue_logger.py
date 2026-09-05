@@ -104,7 +104,7 @@ class IssueLogger:
                 existing_headers = self.worksheet.row_values(1)
                 logger.info(f"Existing headers: {existing_headers}")
                 
-                expected_headers = ['Tanggal Issue', 'Chat ID', 'Username', 'Ticket Number', 'Source', 'Detail Issue', 'Action Resolved']
+                expected_headers = ['Tanggal Issue', 'Chat ID', 'Reporter', 'Ticket Number', 'Source', 'Detail Issue', 'Action Resolved']
                 
                 if len(existing_headers) < 7 or existing_headers[2:4] != expected_headers[2:4]:
                     logger.warning("⚠️ IssueLogs worksheet has old structure, needs migration")
@@ -132,8 +132,8 @@ class IssueLogger:
                 # Small delay to ensure worksheet is ready
                 time.sleep(1)
                 
-                # Add header row (now with Username and Ticket Number)
-                headers = ['Tanggal Issue', 'Chat ID', 'Username', 'Ticket Number', 'Source', 'Detail Issue', 'Action Resolved']
+                # Add header row (now with Reporter and Ticket Number)
+                headers = ['Tanggal Issue', 'Chat ID', 'Reporter', 'Ticket Number', 'Source', 'Detail Issue', 'Action Resolved']
                 
                 try:
                     # Use update_cells with direct cell references (most reliable)
@@ -181,7 +181,7 @@ class IssueLogger:
 
         Args:
             chat_id: Chat ID user
-            username: Username Telegram user
+            username: Reporter username (Telegram user)
             ticket_number: Ticket number (optional)
             source: Source of issue (Web App, Mobile, POS, etc)
             detail_issue: Detail/description issue
