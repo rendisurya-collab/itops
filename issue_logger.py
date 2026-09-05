@@ -48,37 +48,57 @@ class IssueLogger:
             creds_json = os.getenv('GOOGLE_SHEETS_CREDENTIALS')
             spreadsheet_id = os.getenv('GOOGLE_SHEETS_SPREADSHEET_ID')
             
+            logger.info(f"DEBUG: creds_json exists: {bool(creds_json)}")
+            logger.info(f"DEBUG: spreadsheet_id exists: {bool(spreadsheet_id)}")
+            logger.info(f"DEBUG: spreadsheet_id value: {spreadsheet_id[:50] if spreadsheet_id else 'None'}...")
+            
             if not creds_json:
-                logger.error("GOOGLE_SHEETS_CREDENTIALS tidak ditemukan di environment")
+                logger.error("❌ GOOGLE_SHEETS_CREDENTIALS tidak ditemukan di environment")
                 return False
             
             if not spreadsheet_id:
-                logger.error("GOOGLE_SHEETS_SPREADSHEET_ID tidak ditemukan di environment")
+                logger.error("❌ GOOGLE_SHEETS_SPREADSHEET_ID tidak ditemukan di environment")
                 return False
             
             # Parse JSON credentials
             import base64
             try:
                 # Try decoding as base64 first
+                logger.info("Trying to decode credentials as base64...")
                 creds_dict = json.loads(base64.b64decode(creds_json).decode('utf-8'))
-            except:
-                # If not base64, treat as raw JSON
-                creds_dict = json.loads(creds_json)
+                logger.info("✓ Credentials decoded from base64")
+            except Exception as e:
+                logger.info(f"Base64 decode failed ({e}), trying raw JSON...")
+                try:
+                    creds_dict = json.loads(creds_json)
+                    logger.info("✓ Credentials parsed as raw JSON")
+                except Exception as json_error:
+                    logger.error(f"❌ Failed to parse credentials: {json_error}")
+                    return False
+            
+            logger.info(f"Credentials type: {creds_dict.get('type', 'unknown')}")
+            logger.info(f"Project ID: {creds_dict.get('project_id', 'unknown')}")
             
             # Create credentials
+            logger.info("Creating service account credentials...")
             credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+            logger.info("✓ Service account credentials created")
             
             # Initialize gspread client
+            logger.info("Initializing gspread client...")
             self.client = gspread.authorize(credentials)
+            logger.info("✓ gspread client authorized")
             
             # Open spreadsheet by ID (more reliable than by name)
+            logger.info(f"Opening spreadsheet by ID: {spreadsheet_id}")
             self.spreadsheet = self.client.open_by_key(spreadsheet_id)
-            logger.info("✓ Google Sheets client initialized (using existing Railway credentials)")
+            logger.info(f"✓ Spreadsheet opened: {self.spreadsheet.title}")
             
             # Try to open IssueLogs worksheet, if not exist create it
             try:
+                logger.info("Looking for IssueLogs worksheet...")
                 self.worksheet = self.spreadsheet.worksheet('IssueLogs')
-                logger.info("✓ IssueLogs worksheet opened")
+                logger.info(f"✓ IssueLogs worksheet opened ({self.worksheet.row_count} rows)")
             except gspread.exceptions.WorksheetNotFound:
                 logger.info("IssueLogs worksheet not found, creating...")
                 self.worksheet = self.spreadsheet.add_worksheet('IssueLogs', rows=1000, cols=5)
@@ -88,10 +108,11 @@ class IssueLogger:
                 self.worksheet.append_row(headers)
                 logger.info("✓ IssueLogs worksheet created with headers")
             
+            logger.info("✓✓✓ Google Sheets initialization SUCCESS ✓✓✓")
             return True
             
         except Exception as e:
-            logger.error(f"Error initializing Google Sheets: {e}")
+            logger.error(f"❌ Error initializing Google Sheets: {e}", exc_info=True)
             return False
 
     def get_current_timestamp(self) -> str:
