@@ -3885,21 +3885,39 @@ async def reminderslist_command(update: Update, context: ContextTypes.DEFAULT_TY
     """Handler /reminderslist — tampilkan daftar reminders aktif dan status scheduler."""
     try:
         scheduler = get_reminders_scheduler()
+        
+        # If scheduler not initialized yet, try to initialize it
         if not scheduler:
-            await update.message.reply_text(
-                "❌ Reminders scheduler belum diinisialisasi",
-                parse_mode=ParseMode.HTML
-            )
-            return
+            logger.warning("Scheduler not ready yet, attempting lazy initialization...")
+            reminders_manager = get_reminders_manager()
+            if reminders_manager:
+                scheduler = await init_reminders_scheduler(
+                    context.application,
+                    reminders_manager
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Reminders system not initialized",
+                    parse_mode=ParseMode.HTML
+                )
+                return
         
         # Send manager summary
         manager = get_reminders_manager()
+        if not manager:
+            await update.message.reply_text(
+                "❌ Reminders manager not initialized",
+                parse_mode=ParseMode.HTML
+            )
+            return
+            
         summary = manager.get_summary()
         await update.message.reply_text(summary, parse_mode=ParseMode.HTML)
         
         # Send scheduler status
-        status = scheduler.get_status()
-        await update.message.reply_text(status, parse_mode=ParseMode.HTML)
+        if scheduler:
+            status = scheduler.get_status()
+            await update.message.reply_text(status, parse_mode=ParseMode.HTML)
         
     except Exception as e:
         logger.error(f"Error in reminderslist_command: {e}")
@@ -3913,12 +3931,22 @@ async def remindersreload_command(update: Update, context: ContextTypes.DEFAULT_
     """Handler /remindersreload — reload reminders configuration (hot-reload)."""
     try:
         scheduler = get_reminders_scheduler()
+        
+        # If scheduler not initialized yet, try to initialize it
         if not scheduler:
-            await update.message.reply_text(
-                "❌ Reminders scheduler belum diinisialisasi",
-                parse_mode=ParseMode.HTML
-            )
-            return
+            logger.warning("Scheduler not ready yet, attempting lazy initialization...")
+            reminders_manager = get_reminders_manager()
+            if reminders_manager:
+                scheduler = await init_reminders_scheduler(
+                    context.application,
+                    reminders_manager
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Reminders system not initialized",
+                    parse_mode=ParseMode.HTML
+                )
+                return
         
         # Show loading message
         loading_msg = await update.message.reply_text("⏳ Reloading reminders configuration...")
