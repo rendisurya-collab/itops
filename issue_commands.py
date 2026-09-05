@@ -210,7 +210,7 @@ def format_issues_as_text(rows: list) -> str:
         str: Formatted text
     """
     lines = []
-    lines.append("📋 **DAFTAR ISSUE LOG**\n")
+    lines.append("DAFTAR ISSUE LOG\n")
     
     for idx, row in enumerate(rows, 1):
         if len(row) >= 7:
@@ -226,12 +226,12 @@ def format_issues_as_text(rows: list) -> str:
             detail = detail[:80] + "..." if len(detail) > 80 else detail
             action = action[:80] + "..." if len(action) > 80 else action
             
-            lines.append(f"{idx}. **{source}** ({timestamp})")
-            lines.append(f"   👤 @{username}")
+            lines.append(f"{idx}. {source} ({timestamp})")
+            lines.append(f"   username: {username}")
             if ticket_number and ticket_number != "-":
-                lines.append(f"   🎫 {ticket_number}")
-            lines.append(f"   📝 {detail}")
-            lines.append(f"   ✅ {action}")
+                lines.append(f"   ticketnumber: {ticket_number}")
+            lines.append(f"   detail issue: {detail}")
+            lines.append(f"   action resolved: {action}")
             lines.append("")
     
     # Wrap in code block for monospace
