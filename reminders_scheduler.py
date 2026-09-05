@@ -156,13 +156,23 @@ class RemindersScheduler:
             'timezone': 'Asia/Jakarta'
         }
         
-        # Add day_of_week if specified
+        # Add day_of_week if specified (support single string or list)
         if hasattr(reminder, 'day_of_week') and reminder.day_of_week:
-            trigger_kwargs['day_of_week'] = reminder.day_of_week
+            if isinstance(reminder.day_of_week, list):
+                # Convert list to comma-separated string for APScheduler
+                # e.g., ["mon", "tue"] → "mon,tue"
+                trigger_kwargs['day_of_week'] = ','.join(reminder.day_of_week)
+            else:
+                trigger_kwargs['day_of_week'] = reminder.day_of_week
         
-        # Add day_of_month if specified
+        # Add day_of_month if specified (support single int or list)
         if hasattr(reminder, 'day_of_month') and reminder.day_of_month:
-            trigger_kwargs['day'] = reminder.day_of_month
+            if isinstance(reminder.day_of_month, list):
+                # Convert list to comma-separated string for APScheduler
+                # e.g., [25, 26, 27] → "25,26,27"
+                trigger_kwargs['day'] = ','.join(map(str, reminder.day_of_month))
+            else:
+                trigger_kwargs['day'] = reminder.day_of_month
         
         return CronTrigger(**trigger_kwargs)
     

@@ -73,14 +73,30 @@ class ReminderConfig:
         if self.interval_type == "cron":
             self.hour = config_dict.get("hour", 0)
             self.minute = config_dict.get("minute", 0)
-            self.day_of_week = config_dict.get("day_of_week")  # "mon", "tue", etc. or None
-            self.day_of_month = config_dict.get("day_of_month")  # 1-31 or None
+            self.day_of_week = config_dict.get("day_of_week")  # "mon", "tue", etc., list, or None
+            self.day_of_month = config_dict.get("day_of_month")  # 1-31, list, or None
             
             # Validate hour/minute
             if not isinstance(self.hour, int) or not (0 <= self.hour < 24):
                 raise ValueError(f"Reminder {self.id}: hour must be 0-23")
             if not isinstance(self.minute, int) or not (0 <= self.minute < 60):
                 raise ValueError(f"Reminder {self.id}: minute must be 0-59")
+            
+            # Validate day_of_week if it's a list
+            if isinstance(self.day_of_week, list):
+                valid_days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+                for day in self.day_of_week:
+                    if day not in valid_days:
+                        raise ValueError(f"Reminder {self.id}: invalid day_of_week '{day}'")
+            
+            # Validate day_of_month if it's a list
+            if isinstance(self.day_of_month, list):
+                for day in self.day_of_month:
+                    if not isinstance(day, int) or not (1 <= day <= 31):
+                        raise ValueError(f"Reminder {self.id}: day_of_month must be 1-31, got {day}")
+            elif isinstance(self.day_of_month, int):
+                if not (1 <= self.day_of_month <= 31):
+                    raise ValueError(f"Reminder {self.id}: day_of_month must be 1-31")
             
             # Must have either day_of_week or day_of_month
             if not self.day_of_week and not self.day_of_month:
@@ -211,10 +227,22 @@ class RemindersManager:
                     lines.append(f"    └─ Every {reminder.interval_minutes} minutes{time_range_info}")
                 else:
                     schedule_info = []
+                    
+                    # Handle day_of_week (string or list)
                     if hasattr(reminder, 'day_of_week') and reminder.day_of_week:
-                        schedule_info.append(f"{reminder.day_of_week}")
+                        if isinstance(reminder.day_of_week, list):
+                            schedule_info.append(f"{', '.join(reminder.day_of_week)}")
+                        else:
+                            schedule_info.append(str(reminder.day_of_week))
+                    
+                    # Handle day_of_month (int or list)
                     if hasattr(reminder, 'day_of_month') and reminder.day_of_month:
-                        schedule_info.append(f"day {reminder.day_of_month}")
+                        if isinstance(reminder.day_of_month, list):
+                            days_str = ", ".join(map(str, reminder.day_of_month))
+                            schedule_info.append(f"days [{days_str}]")
+                        else:
+                            schedule_info.append(f"day {reminder.day_of_month}")
+                    
                     lines.append(f"    └─ {', '.join(schedule_info)} @ {reminder.hour:02d}:{reminder.minute:02d}")
             lines.append("")
         
