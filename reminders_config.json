@@ -1,0 +1,32 @@
+{
+  "reminders": [
+    {
+      "id": "reminder_logwork",
+      "name": "Reminder: Logwork",
+      "enabled": true,
+      "interval_type": "interval",
+      "interval_minutes": 360,
+      "message": "⏰ <b>Reminder Logwork:</b> Reminder: jangan lupa isi logwork guys"
+    },
+    {
+      "id": "reminder_absensi_bulanan",
+      "name": "Reminder: Absensi Bulanan",
+      "enabled": true,
+      "interval_type": "cron",
+      "day_of_month": 25,
+      "hour": 9,
+      "minute": 0,
+      "message": "📅 <b>Reminder Absensi Bulanan:</b> Mohon melakukan rekap dan submit absensi bulanan Anda."
+    },
+    {
+      "id": "reminder_submit_catatan_log",
+      "name": "Reminder: Submit Catatan Log",
+      "enabled": true,
+      "interval_type": "cron",
+      "day_of_week": "fri",
+      "hour": 17,
+      "minute": 0,
+      "message": "📝 <b>Reminder Submit Catatan Log:</b> Jangan lupa submit catatan log mingguan sebelum pulang!"
+    }
+  ]
+}

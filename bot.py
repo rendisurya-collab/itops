@@ -43,6 +43,8 @@ from dynamic_scheduler import DynamicScheduler
 from db_connector import DatabaseConnector
 from issue_logger import IssueLogger
 from issue_commands import handle_noteissue, handle_listissue, init_issue_logger
+from reminders_manager import init_reminders_manager, get_reminders_manager
+from reminders_scheduler import init_reminders_scheduler, get_reminders_scheduler
 
 # Sembunyikan peringatan PTBUserWarning agar terminal bersih
 warnings.filterwarnings("ignore", category=PTBUserWarning)
@@ -3469,6 +3471,27 @@ async def editguide_action_type(update: Update, context: ContextTypes.DEFAULT_TY
     return await show_edit_menu(update, context)
 
 
+# ==============================================================================
+# BOT LIFECYCLE HANDLERS
+# ==============================================================================
+
+async def post_start_handler(context: ContextTypes.DEFAULT_TYPE):
+    """Post-start handler to initialize async resources like reminders scheduler."""
+    try:
+        # Initialize reminders scheduler (async initialization)
+        reminders_manager = get_reminders_manager()
+        if reminders_manager:
+            reminders_scheduler = await init_reminders_scheduler(
+                context.application,
+                reminders_manager
+            )
+            logger.info("✓ Dynamic reminders scheduler initialized at bot startup")
+        else:
+            logger.warning("⚠️ Reminders manager not initialized")
+    except Exception as e:
+        logger.error(f"❌ Error initializing reminders scheduler: {e}", exc_info=True)
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Terjadi error tak terduga:", exc_info=context.error)
 
@@ -3852,6 +3875,78 @@ _LOCAL_QUOTES = [
     {"text": "Kekuatan tidak datang dari kemenangan. Perjuanganmulah yang menumbuhkan kekuatan.", "author": "Arnold Schwarzenegger"},
     {"text": "Jangan berhenti ketika lelah. Berhentilah ketika selesai.", "author": "Anonim"},
 ]
+
+
+# ==============================================================================
+# REMINDERS MANAGEMENT COMMANDS
+# ==============================================================================
+
+async def reminderslist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /reminderslist — tampilkan daftar reminders aktif dan status scheduler."""
+    try:
+        scheduler = get_reminders_scheduler()
+        if not scheduler:
+            await update.message.reply_text(
+                "❌ Reminders scheduler belum diinisialisasi",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        
+        # Send manager summary
+        manager = get_reminders_manager()
+        summary = manager.get_summary()
+        await update.message.reply_text(summary, parse_mode=ParseMode.HTML)
+        
+        # Send scheduler status
+        status = scheduler.get_status()
+        await update.message.reply_text(status, parse_mode=ParseMode.HTML)
+        
+    except Exception as e:
+        logger.error(f"Error in reminderslist_command: {e}")
+        await update.message.reply_text(
+            f"❌ Error: {str(e)}",
+            parse_mode=ParseMode.HTML
+        )
+
+
+async def remindersreload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler /remindersreload — reload reminders configuration (hot-reload)."""
+    try:
+        scheduler = get_reminders_scheduler()
+        if not scheduler:
+            await update.message.reply_text(
+                "❌ Reminders scheduler belum diinisialisasi",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        
+        # Show loading message
+        loading_msg = await update.message.reply_text("⏳ Reloading reminders configuration...")
+        
+        # Reload all reminders
+        success, message = await scheduler.reload_all_reminders()
+        
+        await loading_msg.delete()
+        
+        if success:
+            await update.message.reply_text(
+                f"✓ {message}",
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await update.message.reply_text(
+                f"⚠️ {message}",
+                parse_mode=ParseMode.HTML
+            )
+        
+        logger.info(f"Reminders reloaded: {message}")
+        
+    except Exception as e:
+        logger.error(f"Error in remindersreload_command: {e}")
+        await update.message.reply_text(
+            f"❌ Error: {str(e)}",
+            parse_mode=ParseMode.HTML
+        )
 
 
 @restricted
@@ -4480,10 +4575,12 @@ async def _broadcast_notify(context: ContextTypes.DEFAULT_TYPE, text: str):
 
 
 async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Legacy daily reminder - kept for backward compatibility. Use dynamic reminders instead."""
     await _broadcast_notify(context, "Reminder: Jangan lupa isi logwork guys")
 
 
 async def interval_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Legacy interval reminder - kept for backward compatibility. Use dynamic reminders instead."""
     now = dt.datetime.now(TZ)
     if not (config.REMINDER_START_HOUR <= now.hour < config.REMINDER_END_HOUR):
         return
@@ -8319,6 +8416,10 @@ def main():
     # Issue Logger commands (Google Sheets integration)
     app.add_handler(CommandHandler("noteissue", handle_noteissue))
     app.add_handler(CommandHandler("listissue", handle_listissue))
+    
+    # Reminders Management commands
+    app.add_handler(CommandHandler("reminderslist", reminderslist_command))
+    app.add_handler(CommandHandler("remindersreload", remindersreload_command))
 
     # Knowledge Base / Bank Data commands
     app.add_handler(CommandHandler("tanyabot", tanya_command))
@@ -8346,6 +8447,10 @@ def main():
     ))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guide_free_text))
+    
+    # Register post-start handler to initialize reminders scheduler
+    app.post_init = post_start_handler
+    
     app.add_error_handler(error_handler)
 
     # --------------------------------------------------------------------------
@@ -8393,21 +8498,15 @@ def main():
             )
 
     if config.REMINDER_INTERVAL_MINUTES > 0:
-        app.job_queue.run_repeating(
-            interval_reminder,
-            interval=dt.timedelta(minutes=config.REMINDER_INTERVAL_MINUTES),
-            first=10,
-        )
-        logger.info(
-            f"Reminder aktif tiap {config.REMINDER_INTERVAL_MINUTES} menit, "
-            f"jam {config.REMINDER_START_HOUR}:00-{config.REMINDER_END_HOUR}:00"
-        )
-    else:
-        app.job_queue.run_daily(
-            daily_reminder,
-            time=dt.time(hour=config.REMINDER_HOUR, minute=config.REMINDER_MINUTE, tzinfo=TZ),
-        )
-        logger.info(f"Reminder aktif tiap hari jam {config.REMINDER_HOUR}:{config.REMINDER_MINUTE:02d}")
+        logger.info(f"ℹ️ REMINDER_INTERVAL_MINUTES configured but using dynamic reminders from reminders_config.json")
+    
+    # Initialize reminders manager (synchronous)
+    try:
+        reminders_manager = init_reminders_manager("reminders_config.json")
+        logger.info("✓ Reminders manager initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize reminders manager: {e}")
+        reminders_manager = None
 
     # Job SLA Monitor (via SDP API)
     if config.SLA_MONITOR_ENABLED:
