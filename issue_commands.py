@@ -50,6 +50,7 @@ Silakan kirim dengan format:
 ```
 /noteissue
 Source: Web App / Mobile / POS
+Ticket Number: TIK-123456 (opsional)
 Kendala: Detail issue yang terjadi
 Action: Action untuk resolve issue
 ```
@@ -58,6 +59,7 @@ Action: Action untuk resolve issue
 ```
 /noteissue
 Source: Web App
+Ticket Number: TIK-2026-001
 Kendala: POS Digital tidak bisa payment setelah update
 Action: Clear cache browser & restart service
 ```
@@ -85,13 +87,19 @@ Action: Clear cache browser & restart service
         
         # Extract data
         source = parsed['source']
+        ticket_number = parsed.get('ticket_number', '')
         detail_issue = parsed['detail_issue']
         action_resolved = parsed['action_resolved']
         chat_id = str(update.effective_chat.id)
         
-        # Append to Google Sheets
+        # Get username from Telegram user object
+        username = update.effective_user.username or update.effective_user.first_name or "Unknown"
+        
+        # Append to Google Sheets (now with username and ticket_number)
         append_success, timestamp = issue_logger.append_issue(
             chat_id=chat_id,
+            username=username,
+            ticket_number=ticket_number,
             source=source,
             detail_issue=detail_issue,
             action_resolved=action_resolved
@@ -108,12 +116,14 @@ Action: Clear cache browser & restart service
         response = f"""✅ **Issue Berhasil Dicatat!**
 
 • **Tanggal:** {timestamp}
+• **Username:** {username}
+• **Ticket Number:** {ticket_number if ticket_number else '-'}
 • **Source:** {source}
 • **Detail Issue:** {detail_issue}
 • **Action Resolved:** {action_resolved}
 """
         await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
-        logger.info(f"Issue recorded: chat_id={chat_id}, source={source}")
+        logger.info(f"Issue recorded: chat_id={chat_id}, username={username}, ticket={ticket_number}, source={source}")
         
     except Exception as e:
         logger.error(f"Error in handle_noteissue: {e}")
@@ -203,18 +213,23 @@ def format_issues_as_text(rows: list) -> str:
     lines.append("📋 **DAFTAR ISSUE LOG**\n")
     
     for idx, row in enumerate(rows, 1):
-        if len(row) >= 5:
+        if len(row) >= 7:
             timestamp = row[0]
             chat_id = row[1]
-            source = row[2]
-            detail = row[3]
-            action = row[4]
+            username = row[2]
+            ticket_number = row[3]
+            source = row[4]
+            detail = row[5]
+            action = row[6]
             
             # Truncate long values
             detail = detail[:80] + "..." if len(detail) > 80 else detail
             action = action[:80] + "..." if len(action) > 80 else action
             
             lines.append(f"{idx}. **{source}** ({timestamp})")
+            lines.append(f"   👤 @{username}")
+            if ticket_number and ticket_number != "-":
+                lines.append(f"   🎫 {ticket_number}")
             lines.append(f"   📝 {detail}")
             lines.append(f"   ✅ {action}")
             lines.append("")
@@ -239,8 +254,8 @@ def create_excel_from_issues(rows: list) -> BytesIO:
     ws = wb.active
     ws.title = "IssueLogs"
     
-    # Add headers
-    headers = ['Tanggal Issue', 'Chat ID', 'Source', 'Detail Issue', 'Action Resolved']
+    # Add headers (now with Username and Ticket Number)
+    headers = ['Tanggal Issue', 'Chat ID', 'Username', 'Ticket Number', 'Source', 'Detail Issue', 'Action Resolved']
     ws.append(headers)
     
     # Style header row
@@ -259,12 +274,14 @@ def create_excel_from_issues(rows: list) -> BytesIO:
     # Set column widths
     ws.column_dimensions['A'].width = 20  # Tanggal
     ws.column_dimensions['B'].width = 12  # Chat ID
-    ws.column_dimensions['C'].width = 15  # Source
-    ws.column_dimensions['D'].width = 40  # Detail Issue
-    ws.column_dimensions['E'].width = 40  # Action Resolved
+    ws.column_dimensions['C'].width = 15  # Username
+    ws.column_dimensions['D'].width = 15  # Ticket Number
+    ws.column_dimensions['E'].width = 15  # Source
+    ws.column_dimensions['F'].width = 40  # Detail Issue
+    ws.column_dimensions['G'].width = 40  # Action Resolved
     
-    # Wrap text for columns D dan E
-    for row in ws.iter_rows(min_row=2, min_col=4, max_col=5):
+    # Wrap text for columns F dan G
+    for row in ws.iter_rows(min_row=2, min_col=6, max_col=7):
         for cell in row:
             cell.alignment = Alignment(wrap_text=True, vertical="top")
     

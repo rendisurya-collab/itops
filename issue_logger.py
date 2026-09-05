@@ -99,14 +99,64 @@ class IssueLogger:
                 logger.info("Looking for IssueLogs worksheet...")
                 self.worksheet = self.spreadsheet.worksheet('IssueLogs')
                 logger.info(f"✓ IssueLogs worksheet opened ({self.worksheet.row_count} rows)")
+                
+                # Check if worksheet has correct structure (7 columns with Username and Ticket Number)
+                existing_headers = self.worksheet.row_values(1)
+                logger.info(f"Existing headers: {existing_headers}")
+                
+                expected_headers = ['Tanggal Issue', 'Chat ID', 'Username', 'Ticket Number', 'Source', 'Detail Issue', 'Action Resolved']
+                
+                if len(existing_headers) < 7 or existing_headers[2:4] != expected_headers[2:4]:
+                    logger.warning("⚠️ IssueLogs worksheet has old structure, needs migration")
+                    logger.info("Attempting to update headers to include Username and Ticket Number...")
+                    
+                    try:
+                        # Update first row with new headers
+                        self.worksheet.update([expected_headers], range_name='A1:G1')
+                        logger.info("✓ Headers updated to new structure (7 columns)")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to update headers: {e}")
+                        logger.info("Please manually update worksheet headers in Google Sheets:")
+                        logger.info("Expected: " + str(expected_headers))
+                else:
+                    logger.info("✓ IssueLogs worksheet has correct structure")
+                    
             except gspread.exceptions.WorksheetNotFound:
                 logger.info("IssueLogs worksheet not found, creating...")
-                self.worksheet = self.spreadsheet.add_worksheet('IssueLogs', rows=1000, cols=5)
+                import time
                 
-                # Add header row
-                headers = ['Tanggal Issue', 'Chat ID', 'Source', 'Detail Issue', 'Action Resolved']
-                self.worksheet.append_row(headers)
-                logger.info("✓ IssueLogs worksheet created with headers")
+                # Create new worksheet with proper parameters
+                self.worksheet = self.spreadsheet.add_worksheet('IssueLogs', rows=1000, cols=7)
+                logger.info(f"✓ Worksheet created: {self.worksheet.title}")
+                
+                # Small delay to ensure worksheet is ready
+                time.sleep(1)
+                
+                # Add header row (now with Username and Ticket Number)
+                headers = ['Tanggal Issue', 'Chat ID', 'Username', 'Ticket Number', 'Source', 'Detail Issue', 'Action Resolved']
+                
+                try:
+                    # Use update_cells with direct cell references (most reliable)
+                    cells_to_update = []
+                    for col_idx, header_value in enumerate(headers, start=1):
+                        cell = gspread.Cell(row=1, col=col_idx, value=header_value)
+                        cells_to_update.append(cell)
+                    
+                    self.worksheet.update_cells(cells_to_update)
+                    logger.info(f"✓ Headers added via update_cells")
+                except Exception as update_err:
+                    logger.warning(f"update_cells failed: {update_err}, trying append_row...")
+                    try:
+                        # Fallback: append row
+                        self.worksheet.append_row(headers)
+                        logger.info(f"✓ Headers added via append_row")
+                    except Exception as append_err:
+                        logger.error(f"append_row failed too: {append_err}")
+                        # Continue anyway, maybe headers weren't critical
+                
+                # Re-fetch worksheet to ensure proper initialization
+                self.worksheet = self.spreadsheet.worksheet('IssueLogs')
+                logger.info("✓ Worksheet re-fetched and ready")
             
             logger.info("✓✓✓ Google Sheets initialization SUCCESS ✓✓✓")
             return True
@@ -125,12 +175,14 @@ class IssueLogger:
         now = datetime.now(self.timezone)
         return now.strftime('%Y-%m-%d %H:%M:%S WIB')
 
-    def append_issue(self, chat_id: str, source: str, detail_issue: str, action_resolved: str) -> Tuple[bool, str]:
+    def append_issue(self, chat_id: str, username: str, ticket_number: str, source: str, detail_issue: str, action_resolved: str) -> Tuple[bool, str]:
         """
         Append row baru ke Google Sheets dengan issue data.
 
         Args:
             chat_id: Chat ID user
+            username: Username Telegram user
+            ticket_number: Ticket number (optional)
             source: Source of issue (Web App, Mobile, POS, etc)
             detail_issue: Detail/description issue
             action_resolved: Action yang diambil untuk resolve
@@ -145,15 +197,36 @@ class IssueLogger:
             # Get current timestamp
             timestamp = self.get_current_timestamp()
             
-            # Prepare row data
-            row_data = [timestamp, str(chat_id), source, detail_issue, action_resolved]
+            # Check worksheet structure to determine column count
+            try:
+                headers = self.worksheet.row_values(1)
+                col_count = len([h for h in headers if h])  # Count non-empty headers
+                logger.info(f"DEBUG: Worksheet headers count: {col_count}, headers: {headers[:7]}")
+            except Exception as e:
+                logger.warning(f"Could not read headers: {e}, assuming new structure")
+                col_count = 7  # Default to new structure
             
-            # Append to worksheet
+            # Prepare row data based on structure
+            if col_count >= 7:
+                # New structure: [timestamp, chat_id, username, ticket_number, source, detail, action]
+                row_data = [timestamp, str(chat_id), username or "N/A", ticket_number or "-", source, detail_issue, action_resolved]
+                logger.info(f"Using new 7-column structure")
+            else:
+                # Old structure fallback: [timestamp, chat_id, source, detail, action]
+                # This is for backward compatibility
+                logger.warning("⚠️ Old worksheet structure detected (5 cols), appending without username/ticket")
+                row_data = [timestamp, str(chat_id), source, detail_issue, action_resolved]
+            
+            # Append to worksheet using append_row
             self.worksheet.append_row(row_data)
             
-            logger.info(f"✓ Issue appended for chat_id={chat_id}: {source}")
+            logger.info(f"✓ Issue appended for {username} (chat_id={chat_id}, ticket={ticket_number}): {source}")
             return True, timestamp
             
+        except gspread.exceptions.APIError as api_err:
+            error_msg = f"Google Sheets API Error: {str(api_err)}"
+            logger.error(error_msg)
+            return False, error_msg
         except Exception as e:
             error_msg = f"Error appending issue: {str(e)}"
             logger.error(error_msg)
@@ -193,6 +266,7 @@ class IssueLogger:
         Parse input dari /noteissue command.
         Format yang diharapkan:
         Source: Web App
+        Ticket Number: TIK-123456 (opsional)
         Kendala: Detail issue di sini
         Action: Action resolved di sini
 
@@ -200,7 +274,7 @@ class IssueLogger:
             text: Raw text input dari user
 
         Return:
-            (success: bool, data: dict dengan keys: source, detail_issue, action_resolved)
+            (success: bool, data: dict dengan keys: source, ticket_number, detail_issue, action_resolved)
         """
         try:
             # Split by newlines
@@ -217,15 +291,22 @@ class IssueLogger:
                 
                 if key == 'source':
                     parsed['source'] = value
+                elif key in ['ticket', 'ticket number', 'nomor ticket', 'no ticket']:
+                    parsed['ticket_number'] = value
                 elif key in ['kendala', 'detail', 'issue']:
                     parsed['detail_issue'] = value
                 elif key in ['action', 'aksi']:
                     parsed['action_resolved'] = value
             
             # Validate required fields
-            if not all(k in parsed for k in ['source', 'detail_issue', 'action_resolved']):
-                missing = [k for k in ['source', 'detail_issue', 'action_resolved'] if k not in parsed]
+            required_fields = ['source', 'detail_issue', 'action_resolved']
+            if not all(k in parsed for k in required_fields):
+                missing = [k for k in required_fields if k not in parsed]
                 return False, {'error': f"Kolom wajib diisi: {', '.join(missing)}"}
+            
+            # Set ticket_number to empty string if not provided
+            if 'ticket_number' not in parsed:
+                parsed['ticket_number'] = ""
             
             return True, parsed
             
