@@ -25,7 +25,7 @@
       "name": "Reminder: Submit Catatan Log",
       "enabled": true,
       "interval_type": "cron",
-      "day_of_week": "mon",
+      "day_of_week": ["mon", "tue", "fri"],
       "hour": 17,
       "minute": 0,
       "message": "📝 <b>Reminder Submit Catatan Log:</b> Jangan lupa submit catatan log mingguan sebelum pulang!"
