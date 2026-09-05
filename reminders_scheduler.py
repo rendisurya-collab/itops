@@ -27,7 +27,21 @@ class RemindersScheduler:
         """
         self.application = application
         self.manager = reminders_manager
-        self.scheduler: AsyncIOScheduler = application.job_queue._scheduler
+        self.job_queue = application.job_queue
+        
+        # Get the actual APScheduler scheduler from job_queue
+        # The scheduler is stored as _scheduler in modern python-telegram-bot
+        try:
+            self.scheduler = getattr(self.job_queue, '_scheduler', None)
+            if self.scheduler is None:
+                # Try alternate access path
+                self.scheduler = getattr(self.job_queue, 'scheduler', None)
+        except:
+            self.scheduler = None
+        
+        if self.scheduler is None:
+            logger.warning("⚠️ Could not access APScheduler directly, will use job_queue methods")
+        
         self.active_jobs: Dict[str, str] = {}  # reminder_id -> job_id mapping
     
     async def send_reminder_notification(self, reminder: ReminderConfig, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -95,6 +109,41 @@ class RemindersScheduler:
         except Exception as e:
             logger.error(f"❌ Error executing reminder job '{reminder_id}': {e}", exc_info=True)
     
+    def _reminder_job_wrapper_sync(self, reminder_id: str, context=None) -> None:
+        """
+        Sync wrapper for reminder job (for job_queue fallback).
+        
+        Args:
+            reminder_id: ID of reminder to execute
+            context: Telegram context (from job_queue)
+        """
+        try:
+            import asyncio
+            
+            reminder = self.manager.get_reminder_by_id(reminder_id)
+            if not reminder:
+                logger.warning(f"⚠️ Reminder not found: {reminder_id}")
+                return
+            
+            # Get or create context
+            if context is None:
+                ctx = ContextTypes.DEFAULT_TYPE()
+                ctx.bot = self.application.bot
+                ctx.application = self.application
+            else:
+                ctx = context
+            
+            # Run async function in event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self.send_reminder_notification(reminder, ctx))
+            finally:
+                loop.close()
+        
+        except Exception as e:
+            logger.error(f"❌ Error executing sync reminder job '{reminder_id}': {e}", exc_info=True)
+    
     def _create_interval_trigger(self, reminder: ReminderConfig) -> IntervalTrigger:
         """Create IntervalTrigger for interval-based reminder."""
         return IntervalTrigger(minutes=reminder.interval_minutes)
@@ -132,34 +181,78 @@ class RemindersScheduler:
                 logger.info(f"⊘ Reminder '{reminder.id}' is disabled, skipping")
                 return True
             
-            # Remove existing job if any
-            if reminder.id in self.active_jobs:
-                try:
-                    self.scheduler.remove_job(self.active_jobs[reminder.id])
-                except Exception as e:
-                    logger.warning(f"Could not remove old job for {reminder.id}: {e}")
-                del self.active_jobs[reminder.id]
-            
             # Create trigger based on interval_type
             if reminder.interval_type == "interval":
                 trigger = self._create_interval_trigger(reminder)
                 logger.info(f"Creating interval trigger for {reminder.id}: every {reminder.interval_minutes} minutes")
+                
+                # Use job_queue.run_repeating for interval reminders
+                if self.scheduler:
+                    # Remove existing job if any
+                    if reminder.id in self.active_jobs:
+                        try:
+                            self.scheduler.remove_job(self.active_jobs[reminder.id])
+                        except Exception as e:
+                            logger.warning(f"Could not remove old job for {reminder.id}: {e}")
+                        del self.active_jobs[reminder.id]
+                    
+                    job = self.scheduler.add_job(
+                        self._reminder_job_wrapper,
+                        trigger=trigger,
+                        args=[reminder.id],
+                        id=f"reminder_{reminder.id}",
+                        name=reminder.name,
+                        replace_existing=True,
+                        max_instances=1
+                    )
+                    self.active_jobs[reminder.id] = job.id
+                else:
+                    # Fallback: use job_queue.run_repeating
+                    logger.info(f"Using job_queue.run_repeating for {reminder.id}")
+                    import datetime as dt
+                    self.job_queue.run_repeating(
+                        lambda ctx: self._reminder_job_wrapper_sync(reminder.id),
+                        interval=dt.timedelta(minutes=reminder.interval_minutes),
+                        first=1,
+                        name=f"reminder_{reminder.id}"
+                    )
+                    self.active_jobs[reminder.id] = f"reminder_{reminder.id}"
+            
             else:  # cron
                 trigger = self._create_cron_trigger(reminder)
                 logger.info(f"Creating cron trigger for {reminder.id}")
+                
+                if self.scheduler:
+                    # Remove existing job if any
+                    if reminder.id in self.active_jobs:
+                        try:
+                            self.scheduler.remove_job(self.active_jobs[reminder.id])
+                        except Exception as e:
+                            logger.warning(f"Could not remove old job for {reminder.id}: {e}")
+                        del self.active_jobs[reminder.id]
+                    
+                    # Register job with scheduler
+                    job = self.scheduler.add_job(
+                        self._reminder_job_wrapper,
+                        trigger=trigger,
+                        args=[reminder.id],
+                        id=f"reminder_{reminder.id}",
+                        name=reminder.name,
+                        replace_existing=True,
+                        max_instances=1
+                    )
+                    self.active_jobs[reminder.id] = job.id
+                else:
+                    # Fallback: use job_queue.run_daily or similar
+                    logger.info(f"Using job_queue.run_daily for {reminder.id}")
+                    import datetime as dt
+                    self.job_queue.run_daily(
+                        lambda ctx: self._reminder_job_wrapper_sync(reminder.id),
+                        time=dt.time(hour=reminder.hour, minute=reminder.minute),
+                        name=f"reminder_{reminder.id}"
+                    )
+                    self.active_jobs[reminder.id] = f"reminder_{reminder.id}"
             
-            # Register job with scheduler
-            job = self.scheduler.add_job(
-                self._reminder_job_wrapper,
-                trigger=trigger,
-                args=[reminder.id],
-                id=f"reminder_{reminder.id}",
-                name=reminder.name,
-                replace_existing=True,
-                max_instances=1
-            )
-            
-            self.active_jobs[reminder.id] = job.id
             logger.info(f"✓ Registered reminder '{reminder.name}' ({reminder.id})")
             return True
         
@@ -204,7 +297,12 @@ class RemindersScheduler:
                 return False
             
             job_id = self.active_jobs[reminder_id]
-            self.scheduler.remove_job(job_id)
+            
+            if self.scheduler:
+                self.scheduler.remove_job(job_id)
+            else:
+                logger.info(f"Job {job_id} not removed (scheduler not accessible)")
+            
             del self.active_jobs[reminder_id]
             
             logger.info(f"✓ Unregistered reminder '{reminder_id}'")
@@ -265,7 +363,11 @@ class RemindersScheduler:
         lines = []
         lines.append("📊 <b>REMINDERS SCHEDULER STATUS</b>\n")
         lines.append(f"Active jobs: {len(self.active_jobs)}")
-        lines.append(f"Scheduler running: {self.scheduler.running if self.scheduler else 'N/A'}")
+        
+        if self.scheduler:
+            lines.append(f"Scheduler running: {self.scheduler.running}")
+        else:
+            lines.append("Scheduler: Using job_queue (direct access not available)")
         
         if self.active_jobs:
             lines.append("\n<b>Registered reminders:</b>")
