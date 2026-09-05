@@ -50,6 +50,24 @@ class ReminderConfig:
             self.interval_minutes = config_dict.get("interval_minutes", 60)
             if not isinstance(self.interval_minutes, int) or self.interval_minutes <= 0:
                 raise ValueError(f"Reminder {self.id}: interval_minutes must be positive integer")
+            
+            # Optional: time range for interval reminders
+            self.hour_start = config_dict.get("hour_start")
+            self.hour_end = config_dict.get("hour_end")
+            
+            # Validate time range if provided
+            if self.hour_start is not None or self.hour_end is not None:
+                if self.hour_start is None or self.hour_end is None:
+                    raise ValueError(f"Reminder {self.id}: if using time range, must specify both hour_start and hour_end")
+                if not isinstance(self.hour_start, int) or not isinstance(self.hour_end, int):
+                    raise ValueError(f"Reminder {self.id}: hour_start and hour_end must be integers")
+                if not (0 <= self.hour_start < 24) or not (0 <= self.hour_end < 24):
+                    raise ValueError(f"Reminder {self.id}: hour_start and hour_end must be 0-23")
+                if self.hour_start >= self.hour_end:
+                    raise ValueError(f"Reminder {self.id}: hour_start must be less than hour_end")
+            else:
+                self.hour_start = None
+                self.hour_end = None
         
         # Cron-specific config
         if self.interval_type == "cron":
@@ -187,7 +205,10 @@ class RemindersManager:
             for reminder in active:
                 lines.append(f"  • {reminder.name} ({reminder.id})")
                 if reminder.interval_type == "interval":
-                    lines.append(f"    └─ Every {reminder.interval_minutes} minutes")
+                    time_range_info = ""
+                    if hasattr(reminder, 'hour_start') and reminder.hour_start is not None:
+                        time_range_info = f" ({reminder.hour_start:02d}:00-{reminder.hour_end:02d}:00)"
+                    lines.append(f"    └─ Every {reminder.interval_minutes} minutes{time_range_info}")
                 else:
                     schedule_info = []
                     if hasattr(reminder, 'day_of_week') and reminder.day_of_week:

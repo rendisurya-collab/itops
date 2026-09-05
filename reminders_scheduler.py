@@ -40,6 +40,17 @@ class RemindersScheduler:
         """
         try:
             from config import notify_targets
+            from datetime import datetime
+            import pytz
+            
+            # Check time range for interval reminders
+            if reminder.interval_type == "interval" and hasattr(reminder, 'hour_start') and reminder.hour_start is not None:
+                tz = pytz.timezone('Asia/Jakarta')
+                current_hour = datetime.now(tz).hour
+                
+                if not (reminder.hour_start <= current_hour < reminder.hour_end):
+                    logger.info(f"⊘ Reminder '{reminder.id}' skipped (outside time range {reminder.hour_start:02d}:00-{reminder.hour_end:02d}:00, current: {current_hour:02d}:00)")
+                    return
             
             targets = notify_targets()
             if not targets:
