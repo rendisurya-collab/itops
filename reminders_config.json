@@ -5,7 +5,7 @@
       "name": "Reminder: Logwork",
       "enabled": true,
       "interval_type": "interval",
-      "interval_minutes": 360,
+      "interval_minutes": 240,
       "hour_start": 9,
       "hour_end": 17,
       "message": "⏰ <b>Reminder Logwork:</b> Reminder: jangan lupa isi logwork guys"
@@ -25,7 +25,7 @@
       "name": "Reminder: Submit Catatan Log",
       "enabled": true,
       "interval_type": "cron",
-      "day_of_week": "fri",
+      "day_of_week": "mon",
       "hour": 17,
       "minute": 0,
       "message": "📝 <b>Reminder Submit Catatan Log:</b> Jangan lupa submit catatan log mingguan sebelum pulang!"
