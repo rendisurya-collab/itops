@@ -83,8 +83,8 @@ class QueryExecutor:
 
     def format_rows_as_text(self, rows: list, max_chars: int = 3500) -> Tuple[str, bool]:
         """
-        Format hasil query sebagai simple readable text untuk Telegram.
-        Hanya text dan angka, tanpa border.
+        Format hasil query sebagai key-value pairs untuk Telegram.
+        Setiap row ditampilkan dengan Col1: value1 format.
 
         Args:
             rows: List of tuples (hasil query)
@@ -99,48 +99,28 @@ class QueryExecutor:
         try:
             lines = []
             
-            # Determine column widths based on content
-            num_cols = len(rows[0]) if isinstance(rows[0], (tuple, list)) else 1
-            col_widths = [12] * num_cols  # Default min width
-            
-            # Calculate max width per column
-            for row in rows:
-                if isinstance(row, (tuple, list)):
-                    for col_idx, value in enumerate(row):
-                        val_str = str(value) if value is not None else "NULL"
-                        col_widths[col_idx] = max(col_widths[col_idx], len(val_str))
-                        
-            # Cap width to prevent too long lines (max 20 per column)
-            col_widths = [min(w, 20) for w in col_widths]
-            
-            # Add header
-            header_cells = []
-            for i in range(num_cols):
-                header = f"Col{i+1}".ljust(col_widths[i])
-                header_cells.append(header)
-            
-            header_line = "  ".join(header_cells)
-            lines.append(header_line)
-            
-            # Separator line
-            sep_line = "  ".join("─" * w for w in col_widths)
-            lines.append(sep_line)
-            
-            # Data rows
+            # Process each row
             for row_idx, row in enumerate(rows):
-                row_cells = []
+                if row_idx > 0:
+                    # Add separator between rows
+                    lines.append("─" * 40)
+                
                 if isinstance(row, (tuple, list)):
                     for col_idx, value in enumerate(row):
+                        col_name = f"Col{col_idx+1}"
                         val_str = str(value) if value is not None else "NULL"
                         # Truncate if too long
-                        if len(val_str) > col_widths[col_idx]:
-                            val_str = val_str[:col_widths[col_idx]-3] + "..."
-                        row_cells.append(val_str.ljust(col_widths[col_idx]))
-                        
-                row_line = "  ".join(row_cells)
-                lines.append(row_line)
+                        if len(val_str) > 50:
+                            val_str = val_str[:47] + "..."
+                        lines.append(f"{col_name}: {val_str}")
+                elif isinstance(row, dict):
+                    for key, value in row.items():
+                        val_str = str(value) if value is not None else "NULL"
+                        if len(val_str) > 50:
+                            val_str = val_str[:47] + "..."
+                        lines.append(f"{key}: {val_str}")
             
-            # Wrap in code block for monospace and clarity
+            # Wrap in code block for monospace
             text = "```\n" + "\n".join(lines) + "\n```"
             
             exceeded = len(text) > max_chars
